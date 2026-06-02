@@ -27,6 +27,7 @@ dependencies = [
     "pandas>=1.5",
     "numpy>=1.23",
     "scipy>=1.9",
+    "statsmodels>=0.13",
     "rich>=13.0",
 ]
 

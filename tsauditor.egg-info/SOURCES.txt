@@ -7,6 +7,7 @@ tests/test_equivalence.py
 tests/test_missing.py
 tests/test_point.py
 tests/test_profiler.py
+tests/test_remediation.py
 tests/test_scaffold.py
 tests/test_stationarity.py
 tests/test_temporal.py
@@ -29,6 +30,7 @@ tsauditor/profiler/frequency.py
 tsauditor/profiler/missing.py
 tsauditor/profiler/stationarity.py
 tsauditor/report/__init__.py
+tsauditor/report/remediation.py
 tsauditor/report/summary.py
 tsauditor/utils/__init__.py
 tsauditor/utils/validation.py

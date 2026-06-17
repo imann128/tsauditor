@@ -34,3 +34,4 @@ report.json
 .DS_Store
 .pypirc
 *.egg-info/
+extracted_check/

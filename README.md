@@ -111,7 +111,7 @@ all 93 tests must pass, and CI will verify this across Python 3.9–3.14 on Linu
 
 ## Status
 
-Beta (`0.1.0`). Profiler, anomaly, and leakage modules are implemented and tested
+Beta (`0.1.1'). Profiler, anomaly, and leakage modules are implemented and tested
 (93 tests passing, CI across Python 3.9–3.14 on Linux, Windows, macOS).
 
 ## License

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A data-quality auditing library for **time-series tabular data**, with a focus on
-financial and sensor domains. `tsauditor` scans a `DataFrame` and returns a
+financial and sensor domains. `tsauditor` scans a `DataFrame` and returns a 
 structured report of structural problems, anomalies, and — its core contribution —
 **data-leakage** between features and the prediction target.
 
@@ -25,11 +25,17 @@ script, and measured results.
 
 ```bash
 pip install tsauditor
-cd tsauditor
-pip install -e ".[dev]"
 ```
 
 Requires Python ≥ 3.9. Core dependencies: `pandas`, `numpy`, `scipy`, `statsmodels`, `rich`.
+
+### Development setup
+
+```bash
+git clone https://github.com/imann128/tsauditor.git
+cd tsauditor
+pip install -e ".[dev]"
+```
 
 ## Quickstart
 
@@ -111,7 +117,7 @@ all 93 tests must pass, and CI will verify this across Python 3.9–3.14 on Linu
 
 ## Status
 
-Beta (`0.1.2'). Profiler, anomaly, and leakage modules are implemented and tested
+Beta (`0.1.2`). Profiler, anomaly, and leakage modules are implemented and tested
 (93 tests passing, CI across Python 3.9–3.14 on Linux, Windows, macOS).
 
 ## License

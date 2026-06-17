@@ -4,8 +4,6 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
 ### Added
 - `leakage` module fully implemented: LEK001 (rank-based target equivalence —
   Spearman for continuous targets, AUC separation for binary), LEK002 (positive-lag

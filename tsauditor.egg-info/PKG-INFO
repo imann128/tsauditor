@@ -5,7 +5,7 @@ Summary: A data quality auditing library for time-series tabular data in financi
 Author-email: Iman <iman@example.com>
 License: MIT
 Keywords: time-series,data-quality,leakage-detection,finance,sensor,audit
-Classifier: Development Status :: Beta
+Classifier: Development Status :: 4 - Beta
 Classifier: Intended Audience :: Developers
 Classifier: Intended Audience :: Science/Research
 Classifier: License :: OSI Approved :: MIT License

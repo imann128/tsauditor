@@ -33,3 +33,4 @@ report.json
 .idea/
 .DS_Store
 .pypirc
+*.egg-info/

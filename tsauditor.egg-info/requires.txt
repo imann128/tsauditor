@@ -1,9 +1,0 @@
-pandas<3,>=1.5
-numpy<3,>=1.23
-scipy<2,>=1.9
-statsmodels<1,>=0.13
-rich<16,>=13.0
-
-[dev]
-pytest>=7.0
-pytest-cov>=4.0

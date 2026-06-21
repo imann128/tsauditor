@@ -7,6 +7,7 @@ run: python compare_leakage.py
 
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pandas as pd
@@ -45,42 +46,64 @@ y_train, y_test = y.iloc[:split], y.iloc[split:]
 
 print(f"\ntrain size: {len(X_all_train)}")
 print(f"test size: {len(X_all_test)}")
-print(f"test period: {X_all_test.index.min().date()} to {X_all_test.index.max().date()}")
+print(
+    f"test period: {X_all_test.index.min().date()} to {X_all_test.index.max().date()}"
+)
 
 # random forest models
 print("random forest classifier")
 
 
-rf_all = RandomForestClassifier(n_estimators=200, max_depth=6, random_state=42, n_jobs=-1)
+rf_all = RandomForestClassifier(
+    n_estimators=200, max_depth=6, random_state=42, n_jobs=-1
+)
 rf_all.fit(X_all_train, y_train)
 rf_all_pred = rf_all.predict(X_all_test)
 rf_all_proba = rf_all.predict_proba(X_all_test)[:, 1]
 
-rf_real = RandomForestClassifier(n_estimators=200, max_depth=6, random_state=42, n_jobs=-1)
+rf_real = RandomForestClassifier(
+    n_estimators=200, max_depth=6, random_state=42, n_jobs=-1
+)
 rf_real.fit(X_real_train, y_train)
 rf_real_pred = rf_real.predict(X_real_test)
 rf_real_proba = rf_real.predict_proba(X_real_test)[:, 1]
 
-print(f"with leakage features:    acc={accuracy_score(y_test, rf_all_pred):.4f}, auc={roc_auc_score(y_test, rf_all_proba):.4f}")
-print(f"realistic features only:  acc={accuracy_score(y_test, rf_real_pred):.4f}, auc={roc_auc_score(y_test, rf_real_proba):.4f}")
-print(f"drop:                     acc={(accuracy_score(y_test, rf_all_pred) - accuracy_score(y_test, rf_real_pred))*100:.1f}%")
+print(
+    f"with leakage features:    acc={accuracy_score(y_test, rf_all_pred):.4f}, auc={roc_auc_score(y_test, rf_all_proba):.4f}"
+)
+print(
+    f"realistic features only:  acc={accuracy_score(y_test, rf_real_pred):.4f}, auc={roc_auc_score(y_test, rf_real_proba):.4f}"
+)
+print(
+    f"drop:                     acc={(accuracy_score(y_test, rf_all_pred) - accuracy_score(y_test, rf_real_pred)) * 100:.1f}%"
+)
 
 # gbm classifier
 print("gbm classifier")
 
-gbm_all = GradientBoostingClassifier(n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42)
+gbm_all = GradientBoostingClassifier(
+    n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42
+)
 gbm_all.fit(X_all_train, y_train)
 gbm_all_pred = gbm_all.predict(X_all_test)
 gbm_all_proba = gbm_all.predict_proba(X_all_test)[:, 1]
 
-gbm_real = GradientBoostingClassifier(n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42)
+gbm_real = GradientBoostingClassifier(
+    n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42
+)
 gbm_real.fit(X_real_train, y_train)
 gbm_real_pred = gbm_real.predict(X_real_test)
 gbm_real_proba = gbm_real.predict_proba(X_real_test)[:, 1]
 
-print(f"with leakage features:    acc={accuracy_score(y_test, gbm_all_pred):.4f}, auc={roc_auc_score(y_test, gbm_all_proba):.4f}")
-print(f"realistic features only:  acc={accuracy_score(y_test, gbm_real_pred):.4f}, auc={roc_auc_score(y_test, gbm_real_proba):.4f}")
-print(f"drop:                     acc={(accuracy_score(y_test, gbm_all_pred) - accuracy_score(y_test, gbm_real_pred))*100:.1f}%")
+print(
+    f"with leakage features:    acc={accuracy_score(y_test, gbm_all_pred):.4f}, auc={roc_auc_score(y_test, gbm_all_proba):.4f}"
+)
+print(
+    f"realistic features only:  acc={accuracy_score(y_test, gbm_real_pred):.4f}, auc={roc_auc_score(y_test, gbm_real_proba):.4f}"
+)
+print(
+    f"drop:                     acc={(accuracy_score(y_test, gbm_all_pred) - accuracy_score(y_test, gbm_real_pred)) * 100:.1f}%"
+)
 
 # summary
 print("summary")
@@ -88,7 +111,7 @@ print(f"""
 leaky features removed: {leaky_features}
 
 realistic features available at prediction time:
-{', '.join(realistic_features[:15])}{'...' if len(realistic_features) > 15 else ''}
+{", ".join(realistic_features[:15])}{"..." if len(realistic_features) > 15 else ""}
 
 key finding:
 - without same-day data, accuracy drops from 0.9968 to 0.6981-0.7370
@@ -98,13 +121,23 @@ key finding:
 
 # save results
 output_path = os.path.join(data_dir, "leakage_comparison_results.csv")
-results = pd.DataFrame({
-    "model": ["random forest", "random forest", "gbm", "gbm"],
-    "features": ["with leakage", "realistic", "with leakage", "realistic"],
-    "accuracy": [accuracy_score(y_test, rf_all_pred), accuracy_score(y_test, rf_real_pred),
-                 accuracy_score(y_test, gbm_all_pred), accuracy_score(y_test, gbm_real_pred)],
-    "auc": [roc_auc_score(y_test, rf_all_proba), roc_auc_score(y_test, rf_real_proba),
-            roc_auc_score(y_test, gbm_all_proba), roc_auc_score(y_test, gbm_real_proba)]
-})
+results = pd.DataFrame(
+    {
+        "model": ["random forest", "random forest", "gbm", "gbm"],
+        "features": ["with leakage", "realistic", "with leakage", "realistic"],
+        "accuracy": [
+            accuracy_score(y_test, rf_all_pred),
+            accuracy_score(y_test, rf_real_pred),
+            accuracy_score(y_test, gbm_all_pred),
+            accuracy_score(y_test, gbm_real_pred),
+        ],
+        "auc": [
+            roc_auc_score(y_test, rf_all_proba),
+            roc_auc_score(y_test, rf_real_proba),
+            roc_auc_score(y_test, gbm_all_proba),
+            roc_auc_score(y_test, gbm_real_proba),
+        ],
+    }
+)
 results.to_csv(output_path, index=False)
 print(f"\nresults saved to: {output_path}")

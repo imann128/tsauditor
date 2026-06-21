@@ -17,6 +17,7 @@ from tsauditor.utils.validation import validate_dataframe, infer_frequency
 
 # ── Import smoke test ─────────────────────────────────────────────────────────
 
+
 def test_package_imports():
     assert hasattr(tsa, "scan")
     assert hasattr(tsa, "GuardReport")
@@ -25,6 +26,7 @@ def test_package_imports():
 
 
 # ── Issue dataclass ───────────────────────────────────────────────────────────
+
 
 def test_issue_creation():
     issue = Issue(
@@ -56,6 +58,7 @@ def test_issue_to_dict():
 
 # ── GuardReport dataclass ─────────────────────────────────────────────────────
 
+
 def test_guard_report_empty():
     report = GuardReport(metadata={"rows": 100})
     assert report.critical == []
@@ -66,9 +69,9 @@ def test_guard_report_empty():
 
 def test_guard_report_filter():
     issues = [
-        Issue("leakage",  "LEK001", CRITICAL, "Target equivalence.", "ChangeP"),
-        Issue("leakage",  "LEK002", WARNING,  "Positive lag peak.",  "RSI"),
-        Issue("profiler", "PRF003", WARNING,  "Non-stationary.",     "Price"),
+        Issue("leakage", "LEK001", CRITICAL, "Target equivalence.", "ChangeP"),
+        Issue("leakage", "LEK002", WARNING, "Positive lag peak.", "RSI"),
+        Issue("profiler", "PRF003", WARNING, "Non-stationary.", "Price"),
     ]
     report = GuardReport(
         critical=[issues[0]],
@@ -107,6 +110,7 @@ def test_guard_report_to_dict():
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
+
 def test_validate_dataframe_with_datetime_index(clean_financial_df):
     out = validate_dataframe(clean_financial_df, target="Direction", time_col=None)
     assert isinstance(out.index, pd.DatetimeIndex)
@@ -114,11 +118,13 @@ def test_validate_dataframe_with_datetime_index(clean_financial_df):
 
 
 def test_validate_dataframe_with_time_col():
-    df = pd.DataFrame({
-        "Date":   pd.date_range("2020-01-01", periods=10),
-        "Price":  range(10),
-        "Target": range(10),
-    })
+    df = pd.DataFrame(
+        {
+            "Date": pd.date_range("2020-01-01", periods=10),
+            "Price": range(10),
+            "Target": range(10),
+        }
+    )
     out = validate_dataframe(df, target="Target", time_col="Date")
     assert isinstance(out.index, pd.DatetimeIndex)
     assert "Date" not in out.columns
@@ -147,6 +153,7 @@ def test_validate_dataframe_rejects_empty():
 
 # ── infer_frequency ───────────────────────────────────────────────────────────
 
+
 def test_infer_frequency_daily(clean_financial_df):
     freq = infer_frequency(clean_financial_df.index)
     assert freq == "daily"
@@ -158,6 +165,7 @@ def test_infer_frequency_subhourly(sensor_df):
 
 
 # ── Scanner entry point ───────────────────────────────────────────────────────
+
 
 def test_scan_rejects_invalid_domain(clean_financial_df):
     with pytest.raises(ValueError, match="domain"):

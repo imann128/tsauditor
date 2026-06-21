@@ -54,11 +54,16 @@ def audit_contextual_anomalies(
         stuck_mask = (counts > stuck_window) & series.notna()
 
         if stuck_mask.any():
-            issues.append(Issue(
-                module="anomaly", code="ANO001", severity=WARNING,
-                description="Stuck values detected.", column=col,
-                evidence={"max_stuck_duration": int(counts[stuck_mask].max())}
-            ))
+            issues.append(
+                Issue(
+                    module="anomaly",
+                    code="ANO001",
+                    severity=WARNING,
+                    description="Stuck values detected.",
+                    column=col,
+                    evidence={"max_stuck_duration": int(counts[stuck_mask].max())},
+                )
+            )
 
         # --- ANO003: contextual spike detection ---
         # Compare each point to its LOCAL context (the surrounding window),
@@ -71,13 +76,13 @@ def audit_contextual_anomalies(
         roll = series_clean.rolling(window=spike_window, center=True, min_periods=mp)
         roll_sq = sq.rolling(window=spike_window, center=True, min_periods=mp)
 
-        n_excl = roll.count() - 1               # neighbours, excluding self
+        n_excl = roll.count() - 1  # neighbours, excluding self
         sum_excl = roll.sum() - series_clean
         sumsq_excl = roll_sq.sum() - sq
 
         local_mean = sum_excl / n_excl
         local_var = (sumsq_excl / n_excl) - local_mean.pow(2)
-        local_std = np.sqrt(local_var.clip(lower=0))   # clip kills tiny fp negatives
+        local_std = np.sqrt(local_var.clip(lower=0))  # clip kills tiny fp negatives
         deviation = (series_clean - local_mean).abs()
 
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -93,13 +98,20 @@ def audit_contextual_anomalies(
         if spike_mask.any():
             finite_z = z_scores[spike_mask].replace([np.inf, -np.inf], np.nan)
             max_z = finite_z.max()
-            issues.append(Issue(
-                module="anomaly", code="ANO003", severity=WARNING,
-                description="Contextual spikes detected.", column=col,
-                evidence={
-                    "n_spikes": int(spike_mask.sum()),
-                    "max_spike_zscore": round(float(max_z), 4) if pd.notna(max_z) else None,
-                    "zero_variance_context": bool(flat_context_spike.any()),
-                }
-            ))
+            issues.append(
+                Issue(
+                    module="anomaly",
+                    code="ANO003",
+                    severity=WARNING,
+                    description="Contextual spikes detected.",
+                    column=col,
+                    evidence={
+                        "n_spikes": int(spike_mask.sum()),
+                        "max_spike_zscore": round(float(max_z), 4)
+                        if pd.notna(max_z)
+                        else None,
+                        "zero_variance_context": bool(flat_context_spike.any()),
+                    },
+                )
+            )
     return issues

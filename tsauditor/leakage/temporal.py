@@ -133,7 +133,7 @@ def audit_temporal_leakage(
         if x.nunique() < 2:
             continue
 
-        r0 = _spearman(x, y, min_obs)          # present feature-target link
+        r0 = _spearman(x, y, min_obs)  # present feature-target link
         if r0 is None:
             continue
 
@@ -142,41 +142,46 @@ def audit_temporal_leakage(
         best_observed = 0.0
 
         for k in range(1, max_lag + 1):
-            per = persistence[k]                            # target autocorrelation
+            per = persistence[k]  # target autocorrelation
             if per is None:
                 continue
-            observed = _spearman(x, futures[k], min_obs)    # feature vs future target
+            observed = _spearman(x, futures[k], min_obs)  # feature vs future target
             if observed is None:
                 continue
 
-            expected = abs(r0) * abs(per)                   # legitimately reachable
+            expected = abs(r0) * abs(per)  # legitimately reachable
             excess = abs(observed) - expected
             if excess > best_excess:
                 best_excess = excess
                 best_lag = k
                 best_observed = observed
 
-        if best_lag > 0 and best_excess >= excess_threshold \
-                and abs(best_observed) >= min_correlation:
-            issues.append(Issue(
-                module="leakage",
-                code="LEK003",
-                severity=WARNING,
-                description=(
-                    f"Feature '{col}' correlates with target '{target}' at lag "
-                    f"+{best_lag} (Spearman={best_observed:.3f}) more strongly than "
-                    f"the target's own persistence explains (excess="
-                    f"{best_excess:.3f}). This is the signature of a forward-looking "
-                    f"or centered window — verify the feature uses only past data."
-                ),
-                column=col,
-                evidence={
-                    "lag": int(best_lag),
-                    "observed_future_corr": round(best_observed, 4),
-                    "excess_over_persistence": round(best_excess, 4),
-                    "excess_threshold": excess_threshold,
-                    "metric": "spearman",
-                },
-            ))
+        if (
+            best_lag > 0
+            and best_excess >= excess_threshold
+            and abs(best_observed) >= min_correlation
+        ):
+            issues.append(
+                Issue(
+                    module="leakage",
+                    code="LEK003",
+                    severity=WARNING,
+                    description=(
+                        f"Feature '{col}' correlates with target '{target}' at lag "
+                        f"+{best_lag} (Spearman={best_observed:.3f}) more strongly than "
+                        f"the target's own persistence explains (excess="
+                        f"{best_excess:.3f}). This is the signature of a forward-looking "
+                        f"or centered window — verify the feature uses only past data."
+                    ),
+                    column=col,
+                    evidence={
+                        "lag": int(best_lag),
+                        "observed_future_corr": round(best_observed, 4),
+                        "excess_over_persistence": round(best_excess, 4),
+                        "excess_threshold": excess_threshold,
+                        "metric": "spearman",
+                    },
+                )
+            )
 
     return issues

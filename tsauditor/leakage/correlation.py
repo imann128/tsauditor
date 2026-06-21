@@ -131,24 +131,26 @@ def audit_correlation_leakage(
                 best_abs, best_lag, best_signed = abs(r), tau, float(r)
 
         if best_lag > 0 and best_abs >= min_correlation:
-            issues.append(Issue(
-                module="leakage",
-                code="LEK002",
-                severity=WARNING,
-                description=(
-                    f"Feature '{col}' has its peak cross-correlation with target "
-                    f"'{target}' at lag +{best_lag} (Spearman={best_signed:.3f}); it "
-                    f"aligns most strongly with future target values, suggesting "
-                    f"lookahead leakage. Review how this feature is constructed."
-                ),
-                column=col,
-                evidence={
-                    "peak_lag": int(best_lag),
-                    "peak_correlation": round(best_signed, 4),
-                    "min_correlation": min_correlation,
-                    "max_lag": max_lag,
-                    "metric": "spearman",
-                },
-            ))
+            issues.append(
+                Issue(
+                    module="leakage",
+                    code="LEK002",
+                    severity=WARNING,
+                    description=(
+                        f"Feature '{col}' has its peak cross-correlation with target "
+                        f"'{target}' at lag +{best_lag} (Spearman={best_signed:.3f}); it "
+                        f"aligns most strongly with future target values, suggesting "
+                        f"lookahead leakage. Review how this feature is constructed."
+                    ),
+                    column=col,
+                    evidence={
+                        "peak_lag": int(best_lag),
+                        "peak_correlation": round(best_signed, 4),
+                        "min_correlation": min_correlation,
+                        "max_lag": max_lag,
+                        "metric": "spearman",
+                    },
+                )
+            )
 
     return issues

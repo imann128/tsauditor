@@ -36,8 +36,8 @@ def _json_default(obj: Any) -> Any:
 
 # ── Severity constants ────────────────────────────────────────────────────────
 CRITICAL = "critical"
-WARNING  = "warning"
-INFO     = "info"
+WARNING = "warning"
+INFO = "info"
 
 _SEVERITY_ORDER = {CRITICAL: 0, WARNING: 1, INFO: 2}
 _SEVERITY_COLOR = {CRITICAL: "bold red", WARNING: "yellow", INFO: "cyan"}
@@ -78,13 +78,13 @@ class Issue:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "module":      self.module,
-            "code":        self.code,
-            "severity":    self.severity,
+            "module": self.module,
+            "code": self.code,
+            "severity": self.severity,
             "description": self.description,
-            "column":      self.column,
-            "evidence":    self.evidence,
-            "suggestion":  self.suggestion,
+            "column": self.column,
+            "evidence": self.evidence,
+            "suggestion": self.suggestion,
         }
 
 
@@ -107,7 +107,7 @@ class GuardReport:
 
     critical: List[Issue] = field(default_factory=list)
     warnings: List[Issue] = field(default_factory=list)
-    info:     List[Issue] = field(default_factory=list)
+    info: List[Issue] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     # ── Convenience accessors ─────────────────────────────────────────────────
@@ -120,9 +120,12 @@ class GuardReport:
             key=lambda i: (_SEVERITY_ORDER.get(i.severity, 9), i.module),
         )
 
-    def filter(self, code: Optional[str] = None,
-               module: Optional[str] = None,
-               severity: Optional[str] = None) -> List[Issue]:
+    def filter(
+        self,
+        code: Optional[str] = None,
+        module: Optional[str] = None,
+        severity: Optional[str] = None,
+    ) -> List[Issue]:
         """
         Return issues matching all supplied filters.
 
@@ -177,7 +180,9 @@ class GuardReport:
         console.print("\n[bold]Dataset[/bold]")
         console.print(f"  Rows       : {meta.get('rows', 'N/A')}")
         console.print(f"  Columns    : {meta.get('columns', 'N/A')}")
-        console.print(f"  Time range : {meta.get('time_start', '?')} → {meta.get('time_end', '?')}")
+        console.print(
+            f"  Time range : {meta.get('time_start', '?')} → {meta.get('time_end', '?')}"
+        )
         console.print(f"  Frequency  : {meta.get('frequency', 'unknown')}")
 
         # Issue counts
@@ -194,9 +199,9 @@ class GuardReport:
         # Issues table
         table = Table(box=box.SIMPLE_HEAVY, show_lines=False, expand=True)
         table.add_column("Severity", style="bold", width=10)
-        table.add_column("Code",     width=8)
-        table.add_column("Module",   width=10)
-        table.add_column("Column",   width=16)
+        table.add_column("Code", width=8)
+        table.add_column("Module", width=10)
+        table.add_column("Column", width=16)
         table.add_column("Description")
 
         for issue in self.all_issues:
@@ -229,11 +234,11 @@ class GuardReport:
         """
         payload = {
             "metadata": self.metadata,
-            "issues":   [i.to_dict() for i in self.all_issues],
+            "issues": [i.to_dict() for i in self.all_issues],
             "counts": {
                 "critical": len(self.critical),
                 "warnings": len(self.warnings),
-                "info":     len(self.info),
+                "info": len(self.info),
             },
         }
         with open(path, "w", encoding="utf-8") as f:
@@ -243,10 +248,10 @@ class GuardReport:
         """Return the full report as a plain Python dict."""
         return {
             "metadata": self.metadata,
-            "issues":   [i.to_dict() for i in self.all_issues],
+            "issues": [i.to_dict() for i in self.all_issues],
             "counts": {
                 "critical": len(self.critical),
                 "warnings": len(self.warnings),
-                "info":     len(self.info),
+                "info": len(self.info),
             },
         }

@@ -21,6 +21,7 @@ def _ar1(n, phi=0.7, seed=0):
 
 # ── Clean / legitimate (must NOT flag) ────────────────────────────────────────
 
+
 def test_clean_financial_no_lookahead(clean_financial_df):
     assert audit_temporal_leakage(clean_financial_df, target="Direction") == []
 
@@ -42,18 +43,21 @@ def test_past_lagged_not_flagged():
 def test_noise_not_flagged():
     n = 400
     t = _ar1(n, seed=3)
-    df = pd.DataFrame({"target": t, "noise": np.random.default_rng(11).normal(0, 1, n)},
-                      index=_idx(n))
+    df = pd.DataFrame(
+        {"target": t, "noise": np.random.default_rng(11).normal(0, 1, n)}, index=_idx(n)
+    )
     assert audit_temporal_leakage(df, target="target") == []
 
 
 # ── Lookahead leakage (must flag) ─────────────────────────────────────────────
 
+
 def test_centered_rolling_caught():
     """A centered window pulls in future values -> excess over persistence."""
     t = _ar1(600, seed=4)
-    df = pd.DataFrame({"target": t, "centered": t.rolling(5, center=True).mean()},
-                      index=_idx(600))
+    df = pd.DataFrame(
+        {"target": t, "centered": t.rolling(5, center=True).mean()}, index=_idx(600)
+    )
     issues = audit_temporal_leakage(df, target="target")
     iss = next(i for i in issues if i.column == "centered")
     assert iss.code == "LEK003"
@@ -69,14 +73,17 @@ def test_future_target_leak_caught():
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 
+
 def test_excess_threshold_param_suppresses():
     t = _ar1(600, seed=6)
-    df = pd.DataFrame({"target": t, "centered": t.rolling(5, center=True).mean()},
-                      index=_idx(600))
+    df = pd.DataFrame(
+        {"target": t, "centered": t.rolling(5, center=True).mean()}, index=_idx(600)
+    )
     assert audit_temporal_leakage(df, target="target", excess_threshold=0.99) == []
 
 
 # ── Edge cases ────────────────────────────────────────────────────────────────
+
 
 def test_missing_target_raises(clean_financial_df):
     with pytest.raises(ValueError, match="not found"):
@@ -85,14 +92,17 @@ def test_missing_target_raises(clean_financial_df):
 
 def test_constant_target_returns_empty():
     n = 100
-    df = pd.DataFrame({"const": np.ones(n), "x": np.arange(n, dtype=float)}, index=_idx(n))
+    df = pd.DataFrame(
+        {"const": np.ones(n), "x": np.arange(n, dtype=float)}, index=_idx(n)
+    )
     assert audit_temporal_leakage(df, target="const") == []
 
 
 def test_constant_feature_skipped():
     t = _ar1(400, seed=7)
-    df = pd.DataFrame({"target": t, "flat": np.full(400, 2.0), "leak": t.shift(-1)},
-                      index=_idx(400))
+    df = pd.DataFrame(
+        {"target": t, "flat": np.full(400, 2.0), "leak": t.shift(-1)}, index=_idx(400)
+    )
     flagged = {i.column for i in audit_temporal_leakage(df, target="target")}
     assert "flat" not in flagged and "leak" in flagged
 

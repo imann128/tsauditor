@@ -35,6 +35,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "ruff==0.15.18",
 ]
 
 [tool.setuptools.packages.find]
@@ -43,6 +44,10 @@ include = ["tsauditor*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
 
 [tool.coverage.run]
 source = ["tsauditor"]

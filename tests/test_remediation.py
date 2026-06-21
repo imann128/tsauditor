@@ -1,4 +1,3 @@
-
 from tsauditor.report.summary import Issue, GuardReport, CRITICAL, WARNING, INFO
 
 
@@ -38,8 +37,10 @@ def test_to_dict_includes_suggestion():
 def test_leaky_columns_lists_only_leakage_columns():
     r = GuardReport(
         critical=[Issue("leakage", "LEK001", CRITICAL, "eq", "ChangeP")],
-        warnings=[Issue("leakage", "LEK002", WARNING, "x", "RSI"),
-                  Issue("profiler", "PRF003", WARNING, "ns", "Price")],
+        warnings=[
+            Issue("leakage", "LEK002", WARNING, "x", "RSI"),
+            Issue("profiler", "PRF003", WARNING, "ns", "Price"),
+        ],
     )
     assert r.leaky_columns() == ["ChangeP", "RSI"]
 

@@ -12,6 +12,7 @@ def _idx(n):
 
 # ── Headline OGDC cases ───────────────────────────────────────────────────────
 
+
 def test_clean_financial_no_equivalence(clean_financial_df):
     """Clean data: no feature is equivalent to the Direction target."""
     issues = audit_equivalence(clean_financial_df, target="Direction")
@@ -34,23 +35,33 @@ def test_pearson_would_have_missed_it(leaky_financial_df):
     """Document the ceiling: point-biserial Pearson < 0.80, AUC ~ 1.0."""
     df = leaky_financial_df
     pearson = abs(df["ChangeP"].corr(df["Direction"].astype(float)))
-    assert pearson < 0.80                       # below the spec's old cutoff
-    iss = next(i for i in audit_equivalence(df, target="Direction")
-               if i.column == "ChangeP")
-    assert iss.evidence["separation"] >= 0.99   # AUC catches it cleanly
+    assert pearson < 0.80  # below the spec's old cutoff
+    iss = next(
+        i for i in audit_equivalence(df, target="Direction") if i.column == "ChangeP"
+    )
+    assert iss.evidence["separation"] >= 0.99  # AUC catches it cleanly
 
 
 # ── Continuous target (Spearman) ──────────────────────────────────────────────
 
+
 def test_continuous_linear_equivalence_caught():
     n = 200
     t = np.random.default_rng(1).normal(0, 1, n)
-    df = pd.DataFrame({"target": t, "leak": 2 * t + 1e-9,
-                       "noise": np.random.default_rng(2).normal(0, 1, n)}, index=_idx(n))
+    df = pd.DataFrame(
+        {
+            "target": t,
+            "leak": 2 * t + 1e-9,
+            "noise": np.random.default_rng(2).normal(0, 1, n),
+        },
+        index=_idx(n),
+    )
     issues = audit_equivalence(df, target="target")
     flagged = {i.column for i in issues}
     assert "leak" in flagged and "noise" not in flagged
-    assert next(i for i in issues if i.column == "leak").evidence["metric"] == "spearman"
+    assert (
+        next(i for i in issues if i.column == "leak").evidence["metric"] == "spearman"
+    )
 
 
 def test_monotonic_nonlinear_equivalence_caught():
@@ -66,11 +77,14 @@ def test_legit_weak_feature_not_flagged():
     n = 300
     rng = np.random.default_rng(4)
     t = rng.normal(0, 1, n)
-    df = pd.DataFrame({"target": t, "weak": 0.3 * t + rng.normal(0, 1, n)}, index=_idx(n))
+    df = pd.DataFrame(
+        {"target": t, "weak": 0.3 * t + rng.normal(0, 1, n)}, index=_idx(n)
+    )
     assert audit_equivalence(df, target="target") == []
 
 
 # ── Edge cases ────────────────────────────────────────────────────────────────
+
 
 def test_missing_target_raises(clean_financial_df):
     with pytest.raises(ValueError, match="not found"):
@@ -79,7 +93,9 @@ def test_missing_target_raises(clean_financial_df):
 
 def test_constant_target_returns_empty():
     n = 100
-    df = pd.DataFrame({"const": np.ones(n), "x": np.arange(n, dtype=float)}, index=_idx(n))
+    df = pd.DataFrame(
+        {"const": np.ones(n), "x": np.arange(n, dtype=float)}, index=_idx(n)
+    )
     assert audit_equivalence(df, target="const") == []
 
 
@@ -106,13 +122,17 @@ def test_categorical_binary_target_encoded():
     df = pd.DataFrame({"label": np.where(x > 0, "up", "down"), "x": x}, index=_idx(n))
     issues = audit_equivalence(df, target="label")
     assert "x" in {i.column for i in issues}
-    assert next(i for i in issues if i.column == "x").evidence["target_type"] == "binary"
+    assert (
+        next(i for i in issues if i.column == "x").evidence["target_type"] == "binary"
+    )
 
 
 def test_continuous_nonnumeric_target_raises():
     n = 100
-    df = pd.DataFrame({"cat": np.array(["a", "b", "c"] * 34)[:n], "x": np.arange(n, dtype=float)},
-                      index=_idx(n))
+    df = pd.DataFrame(
+        {"cat": np.array(["a", "b", "c"] * 34)[:n], "x": np.arange(n, dtype=float)},
+        index=_idx(n),
+    )
     with pytest.raises(ValueError, match="numeric"):
         audit_equivalence(df, target="cat")
 
@@ -128,7 +148,7 @@ def test_scattered_nans_use_pairwise_overlap():
     n = 200
     t = np.random.default_rng(8).normal(0, 1, n)
     leak = t.copy()
-    leak[::5] = np.nan                          # 20% missing, still >min_obs overlap
+    leak[::5] = np.nan  # 20% missing, still >min_obs overlap
     df = pd.DataFrame({"target": t, "leak": leak}, index=_idx(n))
     issues = audit_equivalence(df, target="target")
     assert "leak" in {i.column for i in issues}

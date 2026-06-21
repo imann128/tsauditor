@@ -21,7 +21,7 @@ LEK003  Rolling window lookahead: suspected forward-looking window in feature
 
 from tsauditor.leakage.correlation import audit_correlation_leakage
 from tsauditor.leakage.equivalence import audit_equivalence
-from tsauditor.leakage.temporal    import audit_temporal_leakage
+from tsauditor.leakage.temporal import audit_temporal_leakage
 
 __all__ = [
     "audit_correlation_leakage",

@@ -21,9 +21,9 @@ def scan(
     time_col: Optional[str] = None,
     domain: Optional[str] = None,
     # Fine-grained toggles — all enabled by default
-    run_profiler:  bool = True,
-    run_anomaly:   bool = True,
-    run_leakage:   bool = True,
+    run_profiler: bool = True,
+    run_anomaly: bool = True,
+    run_leakage: bool = True,
 ) -> GuardReport:
     """
     Audit a time-series DataFrame for data quality issues.
@@ -65,22 +65,20 @@ def scan(
     # ── Validate domain argument ──────────────────────────────────────────────
     valid_domains = {"finance", "sensor", None}
     if domain not in valid_domains:
-        raise ValueError(
-            f"domain must be one of {valid_domains}, got '{domain}'."
-        )
+        raise ValueError(f"domain must be one of {valid_domains}, got '{domain}'.")
 
     # ── Validate and normalize input ──────────────────────────────────────────
     df = validate_dataframe(df, target=target, time_col=time_col)
 
     # ── Build metadata ────────────────────────────────────────────────────────
     metadata = {
-        "rows":       len(df),
-        "columns":    len(df.columns),
+        "rows": len(df),
+        "columns": len(df.columns),
         "time_start": str(df.index.min().date()),
-        "time_end":   str(df.index.max().date()),
-        "frequency":  infer_frequency(df.index),
-        "target":     target,
-        "domain":     domain,
+        "time_end": str(df.index.max().date()),
+        "frequency": infer_frequency(df.index),
+        "target": target,
+        "domain": domain,
     }
 
     report = GuardReport(metadata=metadata)
@@ -92,6 +90,7 @@ def scan(
             audit_stationarity,
             audit_missing,
         )
+
         # audit_frequency is run once and its issues routed by severity.
         # (Previously it was called three times — once per bucket.)
         for issue in audit_frequency(df, domain=domain):
@@ -109,6 +108,7 @@ def scan(
             audit_point_anomalies,
             audit_contextual_anomalies,
         )
+
         for issue in audit_point_anomalies(df, domain=domain):
             _append_issue(report, issue)
 
@@ -122,6 +122,7 @@ def scan(
             audit_correlation_leakage,
             audit_temporal_leakage,
         )
+
         for issue in audit_equivalence(df, target=target, domain=domain):
             _append_issue(report, issue)
 

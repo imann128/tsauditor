@@ -160,8 +160,8 @@ def audit_equivalence(
         if target_type == "binary":
             auc = _auc(pair["x"], pair["y"].to_numpy())
             if auc is None:
-                continue                       # only one class present here
-            score = max(auc, 1.0 - auc)        # direction-agnostic separation
+                continue  # only one class present here
+            score = max(auc, 1.0 - auc)  # direction-agnostic separation
             evidence = {
                 "metric": "auc",
                 "auc": round(float(auc), 4),
@@ -184,18 +184,20 @@ def audit_equivalence(
             }
 
         if score >= threshold:
-            issues.append(Issue(
-                module="leakage",
-                code="LEK001",
-                severity=CRITICAL,
-                description=(
-                    f"Feature '{col}' near-deterministically reproduces target "
-                    f"'{target}' ({evidence['metric']} score={score:.4f} >= "
-                    f"{threshold} for {target_type} target). Likely data "
-                    f"leakage — review before modeling."
-                ),
-                column=col,
-                evidence=evidence,
-            ))
+            issues.append(
+                Issue(
+                    module="leakage",
+                    code="LEK001",
+                    severity=CRITICAL,
+                    description=(
+                        f"Feature '{col}' near-deterministically reproduces target "
+                        f"'{target}' ({evidence['metric']} score={score:.4f} >= "
+                        f"{threshold} for {target_type} target). Likely data "
+                        f"leakage — review before modeling."
+                    ),
+                    column=col,
+                    evidence=evidence,
+                )
+            )
 
     return issues

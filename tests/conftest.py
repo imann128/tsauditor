@@ -17,15 +17,18 @@ def clean_financial_df() -> pd.DataFrame:
     dates = pd.date_range("2020-01-01", periods=500, freq="B")  # business days
     price = 100 + np.cumsum(rng.normal(0, 1, 500))
 
-    df = pd.DataFrame({
-        "Price":        price,
-        "Open":         price * rng.uniform(0.99, 1.01, 500),
-        "High":         price * rng.uniform(1.00, 1.02, 500),
-        "Low":          price * rng.uniform(0.98, 1.00, 500),
-        "Volume":       rng.integers(1_000_000, 10_000_000, 500).astype(float),
-        "Return_lag1":  pd.Series(price).pct_change().shift(1).values,
-        "Direction":    (pd.Series(price).pct_change() > 0).astype(int).values,
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "Price": price,
+            "Open": price * rng.uniform(0.99, 1.01, 500),
+            "High": price * rng.uniform(1.00, 1.02, 500),
+            "Low": price * rng.uniform(0.98, 1.00, 500),
+            "Volume": rng.integers(1_000_000, 10_000_000, 500).astype(float),
+            "Return_lag1": pd.Series(price).pct_change().shift(1).values,
+            "Direction": (pd.Series(price).pct_change() > 0).astype(int).values,
+        },
+        index=dates,
+    )
 
     return df.dropna()
 
@@ -51,10 +54,13 @@ def sensor_df() -> pd.DataFrame:
     """
     rng = np.random.default_rng(0)
     dates = pd.date_range("2023-01-01", periods=1000, freq="h")
-    df = pd.DataFrame({
-        "temperature": 20 + np.cumsum(rng.normal(0, 0.1, 1000)),
-        "pressure":    101.3 + rng.normal(0, 0.5, 1000),
-        "vibration":   rng.exponential(1.0, 1000),
-        "label":       (rng.normal(0, 1, 1000) > 0).astype(int),
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "temperature": 20 + np.cumsum(rng.normal(0, 0.1, 1000)),
+            "pressure": 101.3 + rng.normal(0, 0.5, 1000),
+            "vibration": rng.exponential(1.0, 1000),
+            "label": (rng.normal(0, 1, 1000) > 0).astype(int),
+        },
+        index=dates,
+    )
     return df

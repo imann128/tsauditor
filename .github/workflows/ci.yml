@@ -17,10 +17,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Run Ruff Linter & Formatter
-        uses: astral-sh/ruff-action@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          args: "check && ruff format --check"
+          python-version: "3.11"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff Linter
+        run: ruff check .
+
+      - name: Run Ruff Formatter Check
+        run: ruff format --check .
 
 
   test:
@@ -51,8 +60,6 @@ jobs:
           pytest --cov=tsauditor --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        # Only upload once per matrix run to avoid duplicate/conflicting reports.
-        # ubuntu + the lowest supported Python version is the canonical run.
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
         uses: codecov/codecov-action@v7
         with:

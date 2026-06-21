@@ -37,7 +37,7 @@ cd tsauditor
 pip install -e ".[dev]"
 ```
 
-## **Note** Set domain="None" for domain agnostic usage. Similarly, it works well withuut defining a domain at all.
+## **Note:** Set domain="None" for domain agnostic usage. Similarly, it works well withuut defining a domain at all.
 
 ## Quickstart
 
@@ -56,7 +56,7 @@ report.to_json("report.json")    # structured export
 (`critical`, `warnings`, `info`) plus dataset metadata.
 
 ### Output:
-[financial_report](images/financial_report.png)
+![financial_report](images/financial_report.png)
 
 
 ## Sensor:
@@ -97,7 +97,7 @@ report = tsa.scan(df, domain="sensor")
 report.summary()
 ```
 ### Output:
-[sensor_report](images/sensor_report.png)
+![sensor_report](images/sensor_report.png)
 
 ## What it checks
 

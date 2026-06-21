@@ -1,0 +1,16 @@
+name: Update Clone Badge
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  workflow_dispatch: 
+
+permissions:
+  contents: write
+
+jobs:
+  update-badge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: yi-Xu-0100/traffic-to-badge@v1.4.0
+        with:
+          my_token: ${{ secrets.GITHUB_TOKEN }}

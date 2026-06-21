@@ -1,5 +1,6 @@
 # tsauditor
 [![CI](https://github.com/imann128/tsauditor/actions/workflows/ci.yml/badge.svg)](https://github.com/imann128/tsauditor/actions/workflows/ci.yml)
+![Total Clones](https://raw.githubusercontent.com/imann128/tsauditor/traffic/clones.svg)
 [![codecov](https://codecov.io/github/imann128/tsauditor/graph/badge.svg)](https://codecov.io/github/imann128/tsauditor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -37,7 +38,9 @@ cd tsauditor
 pip install -e ".[dev]"
 ```
 
-## **Note:** Set domain="None" for domain agnostic usage. Similarly, it works well withuut defining a domain at all.
+## **Note:** Set domain="None" for domain agnostic usage. Similarly, it works well without defining a domain at all.
+
+**For usage snippets, scroll down in the readme or check out the [examples](./examples) directory for sample scripts**
 
 ## Quickstart
 
@@ -75,7 +78,7 @@ url = "[https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-te
 try:
     df = pd.read_csv(url, parse_dates=["Date"], index_col="Date")
     df.columns = ["air_temperature"]
-    print(" Dataset successfully loaded into memory!")
+    print(" Dataset successfully into memory")
 except Exception as e:
     print(f" Error loading dataset: {e}")
 
@@ -89,8 +92,7 @@ df.iloc[300:310] = None
 # 3. Electrical surge: an impossible 75°C transient spike
 df.iloc[500] = 75.0
 
-print("\n Running `tsauditor` validation sweep...")
-print("-" * 60)
+print("\n Running `tsauditor` validation sweep")
 
 # Execute the audit using the optimized sensor preset
 report = tsa.scan(df, domain="sensor")

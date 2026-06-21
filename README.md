@@ -1,6 +1,6 @@
 # tsauditor
 [![CI](https://github.com/imann128/tsauditor/actions/workflows/ci.yml/badge.svg)](https://github.com/imann128/tsauditor/actions/workflows/ci.yml)
-![Total Clones](https://raw.githubusercontent.com/imann128/tsauditor/traffic/clones.svg)
+![Clones](https://img.shields.io/badge/clones-1000-brightgreen?logo=github)
 [![codecov](https://codecov.io/github/imann128/tsauditor/graph/badge.svg)](https://codecov.io/github/imann128/tsauditor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 

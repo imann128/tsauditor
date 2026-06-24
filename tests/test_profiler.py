@@ -130,3 +130,12 @@ def test_sensor_domain_median_threshold(sensor_df):
     issue = gap_issues[0]
     assert issue.severity == WARNING
     assert issue.evidence["maximum_gap_days"] >= 1.0
+
+
+def test_single_row_df_missing():
+    """Single row DataFrame for frequency: returns empty list, no crash."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"val": [1.0]}, index=dates)
+    issues = audit_frequency(df, domain="finance")
+    assert isinstance(issues, list)
+    assert len(issues) == 0

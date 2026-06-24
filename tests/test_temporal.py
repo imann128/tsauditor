@@ -112,3 +112,12 @@ def test_few_observations_skipped():
     t = _ar1(n, seed=8)
     df = pd.DataFrame({"target": t, "leak": t.shift(-1)}, index=_idx(n))
     assert audit_temporal_leakage(df, target="target", min_obs=30) == []
+
+
+def test_single_row_df():
+    """Single row DataFrame with target: returns empty list, no crash."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"target": [1.0], "feat": [2.0]}, index=dates)
+    issues = audit_temporal_leakage(df, target="target", min_obs=1)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

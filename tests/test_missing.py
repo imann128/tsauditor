@@ -119,3 +119,12 @@ def test_sensor_domain_lower_threshold(sensor_df):
     assert len(cluster_issues) == 1
     assert cluster_issues[0].evidence["cluster_threshold"] == 3
     assert cluster_issues[0].evidence["longest_consecutive_run"] == 3
+
+
+def test_single_row_df():
+    """Single row DataFrame: returns empty list, no crash."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"val": [1.0]}, index=dates)
+    issues = audit_missing(df, domain="finance")
+    assert isinstance(issues, list)
+    assert len(issues) == 0

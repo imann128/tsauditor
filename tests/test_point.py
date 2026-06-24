@@ -64,3 +64,12 @@ def test_audit_point_anomalies_all_nan_column_skipped(base_date_index):
     issues = audit_point_anomalies(df)
     nan_issues = [i for i in issues if i.column == "all_nan"]
     assert len(nan_issues) == 0
+
+
+def test_single_row_df():
+    """Single row DataFrame: returns empty list, no crash."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"val": [1.0]}, index=dates)
+    issues = audit_point_anomalies(df)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

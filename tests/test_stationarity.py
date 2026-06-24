@@ -76,3 +76,14 @@ def test_audit_stationarity_with_nan_and_inf(base_date_index):
 
     issues = audit_stationarity(df, min_obs=25)
     assert isinstance(issues, list)
+
+
+def test_all_nan_column_skipped(base_date_index):
+    """Column that is entirely NaN is skipped gracefully."""
+    df = pd.DataFrame(
+        {"all_nan": [np.nan] * 100, "valid": np.random.randn(100)},
+        index=base_date_index,
+    )
+    issues = audit_stationarity(df, min_obs=25)
+    nan_issues = [i for i in issues if i.column == "all_nan"]
+    assert len(nan_issues) == 0

@@ -86,6 +86,25 @@ def test_non_numeric_columns_ignored():
     assert len(issues) == 0
 
 
+def test_all_nan_column_reported_as_missing():
+    """All-NaN column is correctly reported (100% missing rate, clustering).
+
+    Unlike anomaly detectors which skip all-NaN columns, the missing profiler
+    rightfully flags them — 100% missing is a genuine data quality issue.
+    """
+    dates = pd.date_range("2026-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {"all_nan": [np.nan] * 10, "valid": range(10)},
+        index=dates,
+    )
+    issues = audit_missing(df, domain="finance")
+    nan_issues = [i for i in issues if i.column == "all_nan"]
+    # PRF006: high missing rate (100%), PRF002: clustered missing
+    codes = {i.code for i in nan_issues}
+    assert "PRF006" in codes
+    assert nan_issues[0].evidence["missing_percentage"] == 100.0
+
+
 def test_sensor_domain_lower_threshold(sensor_df):
     # Case 7 — Sensor domain with 3 consecutive NaNs -> PRF002 (lower threshold).
     df = sensor_df.copy()

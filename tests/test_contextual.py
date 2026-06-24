@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+import numpy as np
 from tsauditor.anomaly.contextual import audit_contextual_anomalies
 from tsauditor.report.summary import WARNING
 
@@ -92,3 +93,15 @@ def test_local_spike_fails_global_zscore(clean_financial_df):
 
     spike_issues = [i for i in issues if i.code == "ANO003" and i.column == "Price"]
     assert len(spike_issues) >= 1
+
+
+def test_all_nan_column_skipped():
+    """Column that is entirely NaN is skipped gracefully."""
+    dates = pd.date_range("2026-01-01", periods=20, freq="D")
+    df = pd.DataFrame(
+        {"all_nan": [np.nan] * 20, "valid": range(20)},
+        index=dates,
+    )
+    issues = audit_contextual_anomalies(df, domain="finance")
+    nan_issues = [i for i in issues if i.column == "all_nan"]
+    assert len(nan_issues) == 0

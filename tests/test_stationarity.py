@@ -76,3 +76,24 @@ def test_audit_stationarity_with_nan_and_inf(base_date_index):
 
     issues = audit_stationarity(df, min_obs=25)
     assert isinstance(issues, list)
+
+
+def test_all_nan_column_skipped(base_date_index):
+    """Column that is entirely NaN is skipped gracefully."""
+    df = pd.DataFrame(
+        {"all_nan": [np.nan] * 100, "valid": np.random.randn(100)},
+        index=base_date_index,
+    )
+    issues = audit_stationarity(df, min_obs=25)
+    nan_issues = [i for i in issues if i.column == "all_nan"]
+    assert len(nan_issues) == 0
+
+
+def test_single_row_df_raises_without_guard():
+    """Single row DataFrame passes min_obs=0 but statsmodels adfuller
+    rejects constant input — guard is missing (known issue)."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"val": [1.0]}, index=dates)
+    # TODO: remove pytest.raises once a min_obs guard is added upstream
+    with pytest.raises(ValueError, match="constant"):
+        audit_stationarity(df, min_obs=0)

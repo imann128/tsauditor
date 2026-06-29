@@ -153,3 +153,12 @@ def test_scattered_nans_use_pairwise_overlap():
     issues = audit_equivalence(df, target="target")
     assert "leak" in {i.column for i in issues}
     assert next(i for i in issues if i.column == "leak").evidence["n_obs"] < n
+
+
+def test_single_row_df():
+    """Single row DataFrame with target: returns empty list, no crash."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"target": [1.0], "feat": [2.0]}, index=dates)
+    issues = audit_equivalence(df, target="target", min_obs=1)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

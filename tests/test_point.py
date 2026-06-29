@@ -53,3 +53,23 @@ def test_audit_point_anomalies_finance_threshold(base_date_index):
     # In finance (5.0), 4.5 is not an outlier
     issues = audit_point_anomalies(df, domain="finance")
     assert len(issues) == 0
+
+
+def test_audit_point_anomalies_all_nan_column_skipped(base_date_index):
+    """Column that is entirely NaN is skipped gracefully."""
+    df = pd.DataFrame(
+        {"all_nan": [np.nan] * 100, "valid": np.random.default_rng(42).normal(0, 1, 100)},
+        index=base_date_index,
+    )
+    issues = audit_point_anomalies(df)
+    nan_issues = [i for i in issues if i.column == "all_nan"]
+    assert len(nan_issues) == 0
+
+
+def test_single_row_df():
+    """Single row DataFrame: returns empty list, no crash."""
+    dates = pd.date_range("2026-01-01", periods=1, freq="D")
+    df = pd.DataFrame({"val": [1.0]}, index=dates)
+    issues = audit_point_anomalies(df)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

@@ -103,16 +103,16 @@ def audit_equivalence(
     Returns
     -------
     List[Issue]
-            One LEK001 Issue per flagged feature column.
-
+         One LEK001 Issue per flagged feature column.
+       
 Examples
     -------
-    A feature that is really just the target's sign - cleear separation
+    A feature that is really just the target's sign - clear separation
     between the two classes:
     >>> import pandas as pd
     >>> target = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0] *4
-    >>> feature_triche = [8, 2, 7, 1, 9, 3, 8, 2, 7, 1] *4
-    >>> feature_normale = [100, 150, 120, 130, 90, 110, 140, 95, 105, 115] *4
+    >>> feature_leaky = [8, 2, 7, 1, 9, 3, 8, 2, 7, 1] *4
+    >>> feature_clean = [100, 150, 120, 130, 90, 110, 140, 95, 105, 115] *4
     >>> df = pd.DataFrame({
     ...     "target": target,
     ...     "feature_leaky": feature_leaky,
@@ -124,7 +124,7 @@ Examples
     >>> issues[0].code
     'LEK001'
     >>> issues[0].column
-    'feature_triche'
+    'feature_leaky'
     """
     issues: List[Issue] = []
 

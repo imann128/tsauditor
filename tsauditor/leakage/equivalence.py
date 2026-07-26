@@ -102,6 +102,9 @@ def audit_equivalence(
 
     Returns
     -------
+    List[Issue]
+            One LEK001 Issue per flagged feature column.
+
 Examples
     -------
     A feature that is really just the target's sign - cleear separation
@@ -112,8 +115,8 @@ Examples
     >>> feature_normale = [100, 150, 120, 130, 90, 110, 140, 95, 105, 115] *4
     >>> df = pd.DataFrame({
     ...     "target": target,
-    ...     "feature_triche": feature_triche,
-    ...     "feature_normale": feature_normale,
+    ...     "feature_leaky": feature_leaky,
+    ...     "feature_clean": feature_clean,
     ... })
     >>> issues = audit_equivalence(df, target="target")
     >>> len(issues)

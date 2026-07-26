@@ -153,3 +153,26 @@ def test_scattered_nans_use_pairwise_overlap():
     issues = audit_equivalence(df, target="target")
     assert "leak" in {i.column for i in issues}
     assert next(i for i in issues if i.column == "leak").evidence["n_obs"] < n
+
+    
+def test_multiple_leaky_features_all_flagged():
+    """Two features both equivalent to target: both must be flagged."""
+    n = 200
+    t = np.random.default_rng(9).normal(0, 1, n)
+    df = pd.DataFrame(
+        {"target": t, "leak1": t, "leak2": 2 * t + 1e-9},
+        index=_idx(n),
+    )
+    flagged = {i.column for i in audit_equivalence(df, target="target")}
+    assert "leak1" in flagged and "leak2" in flagged
+
+
+def test_all_nan_feature_skipped():
+    """A feature that is entirely NaN should not be flagged."""
+    n = 100
+    t = np.random.default_rng(10).normal(0, 1, n)
+    df = pd.DataFrame(
+        {"target": t, "empty": np.nan},
+        index=_idx(n),
+    )
+    assert audit_equivalence(df, target="target") == []

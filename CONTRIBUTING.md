@@ -17,11 +17,36 @@ testing requirements, and how to find a good place to start.
 3. **Make your change.** If you're touching code in `tsauditor/`, add or update
    tests in `tests/` for it — PRs that change behavior without test coverage
    will be asked to add tests before merge.
-4. **Run the full test suite** before opening a PR:
+4. **Run all three checks** before opening a PR. CI runs exactly these, so
+   anything that passes here will pass there:
 
    ```bash
-   pytest -q
+   pytest -q            # tests
+   ruff check .         # lint
+   ruff format --check .  # formatting
    ```
+
+   If `ruff format --check` complains, fix it automatically:
+
+   ```bash
+   ruff format .
+   ```
+
+   The formatter check catches things that are easy to miss by eye — a missing
+   newline at the end of a file is the most common one, and it fails CI on its
+   own even when the tests and lint pass. Most editors can prevent it: in VS
+   Code the setting is `files.insertFinalNewline`.
+
+   Install the tooling with the `[dev]` extra, which pins the same Ruff version
+   CI uses:
+
+   ```bash
+   pip install -e ".[dev]"
+   ```
+
+   Plain `pip install -e .` gives you the library but not `ruff`, `pytest-cov`,
+   `matplotlib`, `polars`, `pyarrow` or `joblib` — so several test files will
+   be skipped and you won't be able to run the lint checks at all.
 
    All tests must pass locally. CI will also run the suite across Python
    3.9–3.14 on Linux, Windows, and macOS, and a PR can't merge until those

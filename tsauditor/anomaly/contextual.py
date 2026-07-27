@@ -11,6 +11,34 @@ def audit_contextual_anomalies(
     domain: str = None,
     handle_missing: str = "strict",
 ) -> list:
+    """
+    Audits numeric columns for stuck values (ANO001) and contextual spikes
+    (ANO003).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Time-series DataFrame with a DatetimeIndex.
+    stuck_window : int, optional
+        A run longer than this is flagged as stuck. Derived from ``domain``
+        when None ('sensor' -> 3, otherwise 5).
+    spike_threshold : float, optional
+        Local z-score above which a point is flagged as a spike. Derived from
+        ``domain`` when None ('finance' -> 4.0, 'sensor' -> 3.0, None -> 3.5).
+    spike_window : int, optional
+        Width of the local context window for ANO003. Defaults to 21.
+    domain : str, optional
+        Domain context ('finance', 'sensor', or None). Only consulted for
+        parameters the caller left as None.
+    handle_missing : str
+        "interpolate" fills single-row gaps before auditing; anything else
+        leaves NaNs in place.
+
+    Returns
+    -------
+    list
+        List of Issue objects (ANO001 and/or ANO003).
+    """
     issues = []
 
     if not isinstance(df.index, pd.DatetimeIndex):
@@ -18,21 +46,26 @@ def audit_contextual_anomalies(
     if df.empty:
         return issues
 
-    # Domain defaults
+    # Domain defaults. An explicitly passed argument always wins; `domain` is a
+    # preset consulted only for parameters left as None. `is None` (not `or`)
+    # so a deliberate 0 is honoured rather than treated as "unset".
     if domain == "finance":
-        stuck_window = stuck_window or 5
-        spike_threshold = spike_threshold or 4.0
+        default_stuck, default_spike = 5, 4.0
     elif domain == "sensor":
-        stuck_window = stuck_window or 3
-        spike_threshold = spike_threshold or 3.0
+        default_stuck, default_spike = 3, 3.0
     else:
-        stuck_window = stuck_window or 5
-        spike_threshold = spike_threshold or 3.5
+        default_stuck, default_spike = 5, 3.5
+
+    if stuck_window is None:
+        stuck_window = default_stuck
+    if spike_threshold is None:
+        spike_threshold = default_spike
 
     # Local context window for ANO003. Must be wide enough to estimate the
     # local spread reliably: a 4-5 point window gives a noisy std and floods
     # the result with false positives once the current point is excluded.
-    spike_window = spike_window or 21
+    if spike_window is None:
+        spike_window = 21
 
     for col in df.select_dtypes(include=["number"]).columns:
         series = df[col].copy()

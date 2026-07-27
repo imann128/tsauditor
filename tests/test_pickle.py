@@ -77,3 +77,57 @@ def test_joblib_roundtrip(tmp_path):
     back = joblib.load(path)
     assert back.leaky_columns() == ["ChangeP"]
     assert back.last_fixes == r.last_fixes
+
+
+# ── Panel reports (0.3.0) ────────────────────────────────────────────────────
+
+
+def _panel_report():
+    """
+    A panel scan, which produces Issues carrying `.group` plus panel-level PNL
+    codes. Neither existed before 0.3.0, so nothing else in this file covers
+    them.
+    """
+    import numpy as np
+    import pandas as pd
+
+    import tsauditor as tsa
+
+    dates = pd.date_range("2024-01-01", periods=120, freq="B")
+    parts = []
+    for i, ticker in enumerate(["AAA", "BBB", "CCC"]):
+        rng = np.random.default_rng(i)
+        price = 100 + 50 * i + np.cumsum(rng.normal(0, 1, 120))
+        ret = pd.Series(price).pct_change().to_numpy()
+        parts.append(
+            pd.DataFrame(
+                {
+                    "ticker": ticker,
+                    "price": price,
+                    "ret": ret,
+                    "direction": (ret > 0).astype(float),
+                },
+                index=dates,
+            )
+        )
+    panel = pd.concat(parts).sort_index()
+    report = tsa.scan(
+        panel, target="direction", group_col="ticker", run_stationarity=False
+    )
+    return panel, report
+
+
+def test_joblib_roundtrip_preserves_panel_state(tmp_path):
+    """`Issue.group`, `is_panel` and prevalence must survive serialisation."""
+    joblib = pytest.importorskip("joblib")
+    _, report = _panel_report()
+
+    path = tmp_path / "panel.joblib"
+    joblib.dump(report, path)
+    back = joblib.load(path)
+
+    assert back.is_panel is True
+    assert back.groups() == report.groups()
+    assert back.metadata["group_col"] == "ticker"
+    assert back.prevalence() == report.prevalence()
+    assert [i.group for i in back.all_issues] == [i.group for i in report.all_issues]

@@ -53,6 +53,33 @@ _REMEDIATIONS: Dict[str, str] = {
         "bid exceeds ask). Inspect these timestamps for feed glitches and correct "
         "or remove them before modeling."
     ),
+    "LEK005": (
+        "Check how the target was defined. {target} and its partner column "
+        "together reconstruct it almost exactly while neither does alone, which "
+        "usually means the target is an arithmetic function of the two (a "
+        "difference, a mean, a spread). Remove or rebuild whichever inputs are "
+        "not genuinely available at prediction time."
+    ),
+    # ── Panel structure ──────────────────────────────────────────────────────
+    "PNL002": (
+        "Verify {target} is built from the cross-section at each row's own "
+        "timestamp, not a later one. It currently ranks entities in the order "
+        "their future target values fall, beyond what the target's own "
+        "cross-sectional persistence explains. If it is a genuine predictive "
+        "factor, confirm the magnitude is plausible before keeping it."
+    ),
+    "PNL001": (
+        "Align the panel to a common time index before any cross-sectional "
+        "work: reindex each entity onto the full timestamp set (and decide "
+        "explicitly whether to forward-fill or leave gaps), or restrict the "
+        "panel to the {n_complete_groups} entities with complete coverage."
+    ),
+    "PNL003": (
+        "Treat findings for the short entities as provisional — they fall below "
+        "the {min_rows}-row minimum the leakage and stationarity checks need. "
+        "Either gather more history for them or exclude them from the audit, "
+        "rather than reading their silence as a clean result."
+    ),
     # ── Anomaly ──────────────────────────────────────────────────────────────
     "ANO001": (
         "Investigate {target} for a stuck sensor or a forward-filled gap: the value "

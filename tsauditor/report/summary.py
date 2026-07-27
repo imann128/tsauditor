@@ -63,6 +63,9 @@ class Issue:
         The affected column, or None if dataset-level.
     evidence : Dict[str, Any]
         Supporting statistics (e.g. {"lag0_corr": 0.99, "threshold": 0.95}).
+    group : Optional[str]
+        For a panel scan (``scan(..., group_col=...)``), the entity this issue
+        belongs to. None for an ordinary single-series scan.
     """
 
     module: str
@@ -71,6 +74,7 @@ class Issue:
     description: str
     column: Optional[str] = None
     evidence: Dict[str, Any] = field(default_factory=dict)
+    group: Optional[str] = None
 
     @property
     def suggestion(self) -> str:
@@ -78,7 +82,7 @@ class Issue:
         return suggest(self.code, self.column, self.evidence)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "module": self.module,
             "code": self.code,
             "severity": self.severity,
@@ -87,6 +91,11 @@ class Issue:
             "evidence": self.evidence,
             "suggestion": self.suggestion,
         }
+        # Only present for panel scans, so single-series JSON output is byte-for
+        # byte unchanged.
+        if self.group is not None:
+            payload["group"] = self.group
+        return payload
 
 
 @dataclass
@@ -127,14 +136,17 @@ class GuardReport:
         code: Optional[str] = None,
         module: Optional[str] = None,
         severity: Optional[str] = None,
+        column: Optional[str] = None,
+        group: Optional[str] = None,
     ) -> List[Issue]:
         """
-        Return issues matching all supplied filters.
+        Return issues matching all supplied filters (combined with AND).
 
         Examples
         --------
         >>> report.filter(code="LEK001")
         >>> report.filter(module="leakage", severity="critical")
+        >>> report.filter(group="AAPL")            # panel scans only
         """
         issues = self.all_issues
         if code is not None:
@@ -143,7 +155,111 @@ class GuardReport:
             issues = [i for i in issues if i.module == module]
         if severity is not None:
             issues = [i for i in issues if i.severity == severity]
+        if column is not None:
+            issues = [i for i in issues if i.column == column]
+        if group is not None:
+            issues = [i for i in issues if i.group == group]
         return issues
+
+    # ── Panel accessors ───────────────────────────────────────────────────────
+
+    @property
+    def is_panel(self) -> bool:
+        """True if this report came from a ``scan(..., group_col=...)`` call."""
+        return self.metadata.get("group_col") is not None
+
+    def groups(self) -> List[str]:
+        """Sorted list of every entity scanned. Empty for a single-series scan."""
+        return sorted({i.group for i in self.all_issues if i.group is not None})
+
+    def groups_affected(
+        self,
+        code: Optional[str] = None,
+        column: Optional[str] = None,
+        severity: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Sorted entities affected by a particular finding.
+
+        Examples
+        --------
+        >>> report.groups_affected(code="LEK001", column="ret")
+        ['AAA', 'BBB', 'CCC']
+        """
+        matched = self.filter(code=code, column=column, severity=severity)
+        return sorted({i.group for i in matched if i.group is not None})
+
+    def prevalence(self) -> List[Dict[str, Any]]:
+        """
+        How widely each finding occurs across entities — the headline output of
+        a panel scan.
+
+        A panel of 500 entities can produce tens of thousands of issues, which
+        no one can read. What matters is whether a finding is *systemic* or
+        *isolated*: LEK001 on the same column in 100% of entities is a pipeline
+        bug, whereas ANO002 in 2% is a handful of entities worth a look.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            One row per (code, column), sorted by severity then by how many
+            entities are affected (descending). Keys: ``code``, ``module``,
+            ``severity``, ``column``, ``n_groups``, ``total_groups``, ``pct``,
+            ``example_groups``.
+
+            For a non-panel report this returns one row per (code, column) with
+            ``n_groups`` and ``total_groups`` set to None.
+
+        Examples
+        --------
+        >>> import pandas as pd
+        >>> pd.DataFrame(report.prevalence())
+        """
+        total = self.metadata.get("n_groups")
+
+        buckets: Dict[Any, Dict[str, Any]] = {}
+        for issue in self.all_issues:
+            key = (issue.code, issue.column)
+            row = buckets.setdefault(
+                key,
+                {
+                    "code": issue.code,
+                    "module": issue.module,
+                    "severity": issue.severity,
+                    "column": issue.column,
+                    "_groups": set(),
+                    "_count": 0,
+                },
+            )
+            row["_count"] += 1
+            if issue.group is not None:
+                row["_groups"].add(issue.group)
+
+        rows = []
+        for row in buckets.values():
+            groups = sorted(row.pop("_groups"))
+            count = row.pop("_count")
+            n_groups = len(groups) if groups else None
+            row["n_groups"] = n_groups
+            row["total_groups"] = total
+            row["pct"] = (
+                round(100.0 * n_groups / total, 1)
+                if (n_groups is not None and total)
+                else None
+            )
+            row["n_issues"] = count
+            row["example_groups"] = groups[:5]
+            rows.append(row)
+
+        rows.sort(
+            key=lambda r: (
+                _SEVERITY_ORDER.get(r["severity"], 9),
+                -(r["n_groups"] or 0),
+                r["code"],
+                r["column"] or "",
+            )
+        )
+        return rows
 
     def leaky_columns(self) -> List[str]:
         """
@@ -219,6 +335,7 @@ class GuardReport:
             df,
             target=self.metadata.get("target"),
             domain=self.metadata.get("domain"),
+            group_col=self.metadata.get("group_col"),
             run_leakage=False,
             run_stationarity=False,
         )
@@ -255,6 +372,11 @@ class GuardReport:
             f"  Time range : {meta.get('time_start', '?')} → {meta.get('time_end', '?')}"
         )
         console.print(f"  Frequency  : {meta.get('frequency', 'unknown')}")
+        if self.is_panel:
+            console.print(
+                f"  Entities   : {meta.get('n_groups')} "
+                f"(grouped by '{meta.get('group_col')}')"
+            )
 
         # Issue counts
         console.print(
@@ -265,6 +387,13 @@ class GuardReport:
 
         if not self.all_issues:
             console.print("[green]No issues detected.[/green]\n")
+            return
+
+        # For a panel, listing every issue is unreadable — 500 entities can
+        # produce tens of thousands of rows. Show prevalence instead: what
+        # fraction of entities each finding affects.
+        if self.is_panel:
+            self._print_prevalence(console)
             return
 
         # Issues table
@@ -294,6 +423,36 @@ class GuardReport:
             console.print(f"  • [bold]{issue.code}[/bold]{where}: {issue.suggestion}")
         console.print()
 
+    def _print_prevalence(self, console) -> None:
+        """Panel summary: one row per finding, with how many entities it hits."""
+        table = Table(box=box.SIMPLE_HEAVY, show_lines=False, expand=True)
+        table.add_column("Severity", style="bold", width=10)
+        table.add_column("Code", width=8)
+        table.add_column("Column", width=18)
+        table.add_column("Entities", width=14)
+        table.add_column("%", width=7, justify="right")
+        table.add_column("Examples")
+
+        for row in self.prevalence():
+            color = _SEVERITY_COLOR.get(row["severity"], "white")
+            n, total = row["n_groups"], row["total_groups"]
+            table.add_row(
+                f"[{color}]{row['severity'].upper()}[/{color}]",
+                row["code"],
+                row["column"] or "—",
+                f"{n}/{total}" if n is not None else "panel-level",
+                f"{row['pct']}%" if row["pct"] is not None else "—",
+                ", ".join(row["example_groups"]) or "—",
+            )
+
+        console.print(table)
+        console.print(
+            "\n[dim]A finding at 100% is systemic — suspect the pipeline, not "
+            "the entities. Use report.filter(group=...) to drill in, and "
+            "report.groups_affected(code=..., column=...) for the full list."
+            "[/dim]\n"
+        )
+
     def to_json(self, path: str, df=None, fixed_df=None) -> None:
         """
         Export the full report to a JSON file — the machine-readable companion
@@ -319,6 +478,12 @@ class GuardReport:
             },
             "leaky_columns": self.leaky_columns(),
         }
+        if self.is_panel:
+            payload["panel"] = {
+                "group_col": self.metadata.get("group_col"),
+                "n_groups": self.metadata.get("n_groups"),
+                "prevalence": self.prevalence(),
+            }
         if df is not None:
             from tsauditor.remediate import affected_cells, health_score
 

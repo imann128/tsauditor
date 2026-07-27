@@ -1,4 +1,4 @@
-# Byte-compiled / optimized
+﻿# Byte-compiled / optimized
 __pycache__/
 *.py[cod]
 *$py.class
@@ -23,6 +23,7 @@ htmlcov/
 .tox/
 .mypy_cache/
 .ruff_cache/
+.vscode
 
 # Generated reports
 report.json

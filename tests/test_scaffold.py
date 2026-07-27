@@ -22,7 +22,34 @@ def test_package_imports():
     assert hasattr(tsa, "scan")
     assert hasattr(tsa, "GuardReport")
     assert hasattr(tsa, "Issue")
-    assert tsa.__version__ == "0.2.0"
+    assert hasattr(tsa, "fix")
+    assert hasattr(tsa, "adapters")
+
+
+def test_version_is_well_formed_and_consistent():
+    """
+    The version lives in two places — ``tsauditor/__init__.py`` and
+    ``pyproject.toml`` — and they must agree. Checking consistency rather than a
+    hardcoded literal means this catches a real bug class (bumping one and
+    forgetting the other) without needing an edit every release.
+    """
+    import pathlib
+    import re
+
+    version = tsa.__version__
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), version
+
+    pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if not pyproject.exists():  # pragma: no cover - installed without sources
+        pytest.skip("pyproject.toml not available")
+
+    declared = re.search(
+        r'^version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"), re.M
+    )
+    assert declared is not None, "no version found in pyproject.toml"
+    assert declared.group(1) == version, (
+        f"pyproject.toml says {declared.group(1)}, tsauditor.__version__ says {version}"
+    )
 
 
 # ── Issue dataclass ───────────────────────────────────────────────────────────

@@ -22,8 +22,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Ruff
-        run: pip install ruff==0.15.18
+      # Single source of truth: the ruff pin lives in pyproject.toml's [dev]
+      # extra. Reading it here keeps CI in step with `pip install -e ".[dev]"`,
+      # so a Dependabot bump to pyproject.toml cannot silently desync CI and
+      # leave contributors formatting with a different ruff than CI checks.
+      - name: Install Ruff (version pinned in pyproject.toml)
+        run: |
+          RUFF=$(grep -oE '"ruff==[0-9]+\.[0-9]+\.[0-9]+"' pyproject.toml | tr -d '"')
+          if [ -z "$RUFF" ]; then
+            echo "::error::Could not find a pinned 'ruff==X.Y.Z' in pyproject.toml [dev]"
+            exit 1
+          fi
+          echo "Installing $RUFF"
+          pip install "$RUFF"
 
       - name: Run Ruff Linter
         run: ruff check .

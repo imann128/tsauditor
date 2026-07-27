@@ -27,12 +27,32 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
         duplicate_mask = df.index.duplicated(keep=False)
         duplicate_timestamps = df.index[duplicate_mask].unique()
 
+        # Distinguish a genuine duplication bug from panel/long-format data.
+        # In a panel every timestamp legitimately repeats once per entity, so
+        # the repeat count is uniform and > 1 across (nearly) the whole index.
+        # Flagging that as broken alignment is unhelpful: the user needs to be
+        # told about group_col=, not told their data is corrupt.
+        counts = df.index.value_counts()
+        looks_like_panel = (
+            len(counts) > 1 and counts.min() > 1 and counts.nunique() <= 2
+        )
+
+        description = "Duplicate timestamps detected in the index. Chronological alignment broken."
+        if looks_like_panel:
+            description += (
+                f" Every timestamp repeats {int(counts.min())}-{int(counts.max())} "
+                f"times, which is the shape of panel (long-format) data rather "
+                f"than a duplication bug. If these rows are separate entities, "
+                f"pass group_col='<your entity column>' so each entity is "
+                f"audited as its own time series."
+            )
+
         issues.append(
             Issue(
                 module="profiler",
                 code="PRF004",
                 severity=CRITICAL,
-                description="Duplicate timestamps detected in the index. Chronological alignment broken.",
+                description=description,
                 column=None,
                 evidence={
                     "duplicate_count": int(duplicate_mask.sum()),
@@ -40,6 +60,8 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
                         ts.strftime("%Y-%m-%d %H:%M:%S")
                         for ts in duplicate_timestamps[:5]
                     ],
+                    "looks_like_panel": bool(looks_like_panel),
+                    "repeats_per_timestamp": [int(counts.min()), int(counts.max())],
                 },
             )
         )

@@ -22,6 +22,7 @@ def scan(
     domain: Optional[str] = None,
     available_at: Optional[dict] = None,
     constraints: Optional[dict] = None,
+    group_col: Optional[str] = None,
     # Fine-grained toggles — all enabled by default
     run_profiler: bool = True,
     run_anomaly: bool = True,
@@ -58,6 +59,20 @@ def scan(
         (ordered ``(low, high)`` column pairs that must satisfy ``low <= high``,
         e.g. ``[("bid", "ask")]``). A flat ``{col: {...}}`` mapping is treated as
         bounds. Omitted (default) skips validity checks.
+    group_col : Optional[str]
+        Entity column for panel (long-format) data, e.g. ``"ticker"``. When
+        given, the frame is partitioned by this column and **each entity is
+        audited as its own independent time series**; every resulting Issue is
+        tagged with its entity via ``Issue.group``.
+
+        Without it a panel is treated as one interleaved series, which makes the
+        structural, anomaly and rolling checks meaningless — a rolling window
+        would span several entities at once, and every timestamp would look
+        duplicated.
+
+        Panel-level structure checks (PNL001, PNL003) also run, and
+        ``report.prevalence()`` summarises how widely each finding occurs across
+        entities.
     run_profiler : bool
         Run structural profiling checks. Default True.
     run_anomaly : bool
@@ -90,6 +105,17 @@ def scan(
     # ── Validate and normalize input ──────────────────────────────────────────
     df = validate_dataframe(df, target=target, time_col=time_col)
 
+    if group_col is not None and group_col not in df.columns:
+        raise ValueError(
+            f"group_col='{group_col}' not found in DataFrame columns: "
+            f"{list(df.columns)}"
+        )
+    if group_col is not None and group_col == target:
+        raise ValueError(
+            f"group_col and target are both '{group_col}'; the entity column "
+            f"cannot also be the prediction target."
+        )
+
     # ── Build metadata ────────────────────────────────────────────────────────
     metadata = {
         "rows": len(df),
@@ -103,8 +129,88 @@ def scan(
 
     report = GuardReport(metadata=metadata)
 
+    options = _ScanOptions(
+        target=target,
+        domain=domain,
+        available_at=available_at,
+        constraints=constraints,
+        run_profiler=run_profiler,
+        run_anomaly=run_anomaly,
+        run_leakage=run_leakage,
+        run_stationarity=run_stationarity,
+    )
+
+    if group_col is None:
+        for issue in _run_checks(df, options):
+            _append_issue(report, issue)
+        return report
+
+    # ── Panel mode ────────────────────────────────────────────────────────────
+    # Each entity is an independent time series, so the ordinary checks run
+    # unchanged on each partition and every issue is tagged with its entity.
+    # The detectors never learn what a panel is.
+    from tsauditor.panel import audit_cross_sectional_leakage, audit_panel_structure
+
+    groups = list(df.groupby(group_col, sort=True))
+
+    metadata["group_col"] = group_col
+    metadata["n_groups"] = len(groups)
+    # frequency was inferred from the interleaved index, which is meaningless
+    # for a panel; re-infer it from a single entity instead.
+    if groups:
+        metadata["frequency"] = infer_frequency(groups[0][1].index)
+
+    for issue in audit_panel_structure(df, group_col=group_col):
+        _append_issue(report, issue)
+
+    # Cross-sectional lookahead (PNL002) is panel-level and target-based. It
+    # exists because the per-entity checks below degrade badly when a common
+    # factor dominates; see tsauditor/panel.py.
+    if run_leakage and target is not None:
+        for issue in audit_cross_sectional_leakage(
+            df, group_col=group_col, target=target
+        ):
+            _append_issue(report, issue)
+
+    for key, sub in groups:
+        sub = sub.drop(columns=[group_col])
+        for issue in _run_checks(sub, options):
+            issue.group = str(key)
+            _append_issue(report, issue)
+
+    return report
+
+
+class _ScanOptions:
+    """Plain container for the per-partition check settings."""
+
+    __slots__ = (
+        "target",
+        "domain",
+        "available_at",
+        "constraints",
+        "run_profiler",
+        "run_anomaly",
+        "run_leakage",
+        "run_stationarity",
+    )
+
+    def __init__(self, **kwargs):
+        for name in self.__slots__:
+            setattr(self, name, kwargs[name])
+
+
+def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
+    """
+    Run every enabled check against one already-validated time series and yield
+    the resulting Issues.
+
+    This is the single-series pipeline. ``scan`` calls it once for an ordinary
+    frame, or once per entity for a panel — which is what keeps panel support
+    from leaking into the detectors themselves.
+    """
     # ── Profiler ──────────────────────────────────────────────────────────────
-    if run_profiler:
+    if opts.run_profiler:
         from tsauditor.profiler import (
             audit_frequency,
             audit_stationarity,
@@ -113,67 +219,56 @@ def scan(
 
         # audit_frequency is run once and its issues routed by severity.
         # (Previously it was called three times — once per bucket.)
-        for issue in audit_frequency(df, domain=domain):
-            _append_issue(report, issue)
+        yield from audit_frequency(df, domain=opts.domain)
 
         # ADF is the heaviest check; allow opting out.
-        if run_stationarity:
-            for issue in audit_stationarity(df, domain=domain):
-                _append_issue(report, issue)
+        if opts.run_stationarity:
+            yield from audit_stationarity(df, domain=opts.domain)
 
-        for issue in audit_missing(df, domain=domain):
-            _append_issue(report, issue)
+        yield from audit_missing(df, domain=opts.domain)
 
     # ── Anomaly ───────────────────────────────────────────────────────────────
-    if run_anomaly:
+    if opts.run_anomaly:
         from tsauditor.anomaly import (
             audit_point_anomalies,
             audit_contextual_anomalies,
         )
 
-        for issue in audit_point_anomalies(df, domain=domain):
-            _append_issue(report, issue)
-
-        for issue in audit_contextual_anomalies(df, domain=domain):
-            _append_issue(report, issue)
+        yield from audit_point_anomalies(df, domain=opts.domain)
+        yield from audit_contextual_anomalies(df, domain=opts.domain)
 
     # ── Leakage ───────────────────────────────────────────────────────────────
-    if run_leakage and target is not None:
+    if opts.run_leakage and opts.target is not None:
         from tsauditor.leakage import (
             audit_equivalence,
             audit_correlation_leakage,
             audit_temporal_leakage,
         )
 
-        for issue in audit_equivalence(df, target=target, domain=domain):
-            _append_issue(report, issue)
+        from tsauditor.leakage.combination import audit_combination_leakage
 
-        for issue in audit_correlation_leakage(df, target=target, domain=domain):
-            _append_issue(report, issue)
-
-        for issue in audit_temporal_leakage(df, target=target, domain=domain):
-            _append_issue(report, issue)
+        yield from audit_equivalence(df, target=opts.target, domain=opts.domain)
+        yield from audit_correlation_leakage(df, target=opts.target, domain=opts.domain)
+        yield from audit_temporal_leakage(df, target=opts.target, domain=opts.domain)
+        yield from audit_combination_leakage(df, target=opts.target, domain=opts.domain)
 
     # As-of leakage is target-independent and only runs when the caller supplies
     # availability metadata (it cannot be inferred from values alone).
-    if run_leakage and available_at:
+    if opts.run_leakage and opts.available_at:
         from tsauditor.leakage import audit_asof_leakage
 
-        for issue in audit_asof_leakage(df, available_at=available_at):
-            _append_issue(report, issue)
+        yield from audit_asof_leakage(df, available_at=opts.available_at)
 
     # Domain-validity rules only run when the caller declares them.
-    if constraints:
+    if opts.constraints:
         from tsauditor.validity import audit_validity
 
-        bounds = constraints.get("bounds")
-        relations = constraints.get("relations")
+        bounds = opts.constraints.get("bounds")
+        relations = opts.constraints.get("relations")
         if bounds is None and relations is None:
-            bounds = constraints  # flat {col: spec} mapping treated as bounds
-        for issue in audit_validity(df, bounds=bounds, relations=relations):
-            _append_issue(report, issue)
-
-    return report
+            # flat {col: spec} mapping treated as bounds
+            bounds = opts.constraints
+        yield from audit_validity(df, bounds=bounds, relations=relations)
 
 
 def _append_issue(report: GuardReport, issue: Issue) -> None:

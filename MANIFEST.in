@@ -1,0 +1,39 @@
+# Source-distribution contents.
+#
+# setuptools walks the working tree when building an sdist, and it does *not*
+# read .gitignore. Without these prunes, a local virtualenv or cache directory
+# gets traversed — on this project that made `python -m build` fail outright
+# with "RecursionError: maximum recursion depth exceeded" while stat-ing paths
+# inside .venv. Pruning them keeps the build reproducible from a dirty working
+# tree, not just a fresh clone.
+
+include README.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include pyproject.toml
+
+recursive-include tests *.py
+recursive-include tsauditor *.py
+
+# Local environments and caches — never part of a release.
+prune .venv
+prune venv
+prune env
+prune .git
+prune .github
+prune .ruff_cache
+prune .pytest_cache
+prune .mypy_cache
+prune htmlcov
+prune dist
+prune build
+prune wiki
+prune docs
+prune examples
+prune images
+
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.so

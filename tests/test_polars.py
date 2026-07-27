@@ -47,3 +47,42 @@ def test_polars_and_pandas_agree():
     assert {(i.code, i.column) for i in r_pl.all_issues} == {
         (i.code, i.column) for i in r_pd.all_issues
     }
+
+
+def test_polars_panel_scan_with_group_col():
+    """
+    polars input combined with group_col. polars has no index, so the frame is
+    converted at the boundary and *then* partitioned by entity — a path neither
+    the polars tests nor the panel tests covered on their own.
+    """
+    dates = pd.date_range("2024-01-01", periods=120, freq="B")
+    rows = []
+    for i, ticker in enumerate(["AAA", "BBB", "CCC"]):
+        rng = np.random.default_rng(i)
+        price = 100 + 50 * i + np.cumsum(rng.normal(0, 1, 120))
+        ret = pd.Series(price).pct_change().to_numpy()
+        rows.append(
+            pd.DataFrame(
+                {
+                    "Date": dates,
+                    "ticker": ticker,
+                    "price": price,
+                    "ret": ret,
+                    "direction": (ret > 0).astype(float),
+                }
+            )
+        )
+    flat = pd.concat(rows, ignore_index=True)
+
+    report = tsa.scan(
+        pl.from_pandas(flat),
+        target="direction",
+        time_col="Date",
+        group_col="ticker",
+        run_stationarity=False,
+    )
+
+    assert report.is_panel is True
+    assert report.metadata["n_groups"] == 3
+    assert report.groups() == ["AAA", "BBB", "CCC"]
+    assert "ret" in report.leaky_columns()

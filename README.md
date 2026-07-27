@@ -2,7 +2,7 @@
 [![CI](https://github.com/imann128/tsauditor/actions/workflows/ci.yml/badge.svg)](https://github.com/imann128/tsauditor/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/imann128/tsauditor/graph/badge.svg)](https://codecov.io/github/imann128/tsauditor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)
 
 A data-quality auditing library for **time-series tabular data**, with a focus on
 financial and sensor domains. `tsauditor` scans a `DataFrame` and returns a
@@ -29,7 +29,7 @@ script, and measured results.
 `tsauditor` is **column-agnostic** — it never hard-codes `price`, `Direction`, or any
 other column. `price`/`Direction` are simply the columns in the OGDC example above. The
 structural (PRF), anomaly (ANO), and target-relative leakage (LEK001–003) checks apply to
-*any* numeric time-series column. Version 0.2.0 adds two **declarative** mechanisms —
+*any* numeric time-series column. Version 0.2.0 added two **declarative** mechanisms —
 `available_at=` (point-in-time release correctness) and `constraints=` (domain validity) —
 so you can also audit macro, sentiment, order-book, volatility, and other alternative-data
 columns correctly. tsauditor never *computes* these features; you point it at your columns
@@ -166,8 +166,12 @@ report.summary()
 | leakage | LEK002 | warning | Positive-lag cross-correlation peak (future info) |
 | leakage | LEK003 | warning | Rolling-window lookahead (excess over persistence) |
 | leakage | LEK004 | critical | As-of leakage (value used before its release time) |
+| leakage | LEK005 | critical | Combination leakage (a group of features reconstructs the target) |
 | validity | VAL001 | warning | Out-of-range value (declared per-column bounds) |
 | validity | VAL002 | critical | Ordering violation (e.g. crossed book, `bid > ask`) |
+| panel | PNL001 | warning | Ragged panel (entities don't share a time index) |
+| panel | PNL002 | warning | Cross-sectional lookahead (feature knows future entity ordering) |
+| panel | PNL003 | info | Entity too short to audit meaningfully |
 
 Codes marked **critical** block modeling; **warning** and **info** are advisory.
 
@@ -337,9 +341,30 @@ report = tsa.scan(pl_df, target="Direction", time_col="Date", domain="finance")
 Install with `pip install 'tsauditor[polars]'`. tsauditor converts to pandas at the
 boundary; the audit logic is identical. (See issue #28.)
 
-**Audit a whole universe in parallel.** `scan()` is a pure function and `GuardReport`
-is a plain, picklable dataclass, so it parallelises cleanly with `joblib` — ideal for
-sweeping every symbol for leakage before you train:
+**Panel (long-format) data.** If your frame stacks many entities with a repeated
+timestamp column — 500 stocks, 200 sensors, 50 stores — pass `group_col=` and each
+entity is audited as its own independent time series:
+
+```python
+report = tsa.scan(panel, target="Direction", group_col="ticker", domain="finance")
+report.summary()          # prevalence view: which findings are systemic vs isolated
+```
+
+Without it, a panel is treated as one interleaved series and the structural, anomaly
+and rolling checks are meaningless — a rolling window would span several entities at
+once. `report.prevalence()` then answers the question that actually matters at scale:
+
+```
+CRITICAL  LEK001  ret    5/5   100.0%   <- systemic: suspect the pipeline
+WARNING   ANO002  price  1/5    20.0%   <- isolated: inspect that entity
+```
+
+Repairs are panel-aware too — `apply_fixes()` partitions by entity, so one entity's
+values can never fill another's gaps. See the [Panel Data](https://github.com/imann128/tsauditor/wiki/Panel-Data) wiki page.
+
+**Audit separate frames in parallel.** If your entities live in separate DataFrames
+rather than one long-format frame, `scan()` is a pure function and `GuardReport` is a
+plain, picklable dataclass, so it parallelises cleanly with `joblib`:
 
 ```python
 from joblib import Parallel, delayed
@@ -395,8 +420,8 @@ Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.subst
 
 ## Status
 
-Beta (`0.2.0`). Profiler, anomaly, leakage, validity, remediation, and export modules are
-implemented and tested (164 tests passing; CI across Python 3.9–3.14 on
+Beta (`0.3.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
+modules are implemented and tested (363 tests passing; CI across Python 3.9–3.14 on
 Linux, Windows, macOS).
 
 ## License

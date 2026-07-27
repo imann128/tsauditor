@@ -199,6 +199,23 @@ def apply_fixes(
                 f"{name}={value!r} is invalid; choose one of {sorted(str(a) for a in allowed)}."
             )
 
+    # Panel data must be repaired entity by entity. Interpolating an interleaved
+    # frame carries one entity's values across into another's gaps: measured on a
+    # two-entity panel, a gap in a series sitting near 10 was filled with ~1000
+    # from the other entity. See _apply_fixes_by_group.
+    group_col = report.metadata.get("group_col")
+    if group_col is not None and group_col in df.columns:
+        return _apply_fixes_by_group(
+            report,
+            df,
+            group_col=group_col,
+            missing=missing,
+            outliers=outliers,
+            stuck=stuck,
+            leakage=leakage,
+            verbose=verbose,
+        )
+
     out = df.copy()
     domain = report.metadata.get("domain")
     # Never repair the target column (the label): binary targets trip ANO001,
@@ -335,6 +352,91 @@ def apply_fixes(
                         "cells_changed": filled,
                     }
                 )
+
+    report.last_fixes = log
+    if verbose:
+        _print_log(log)
+    return out
+
+
+def _apply_fixes_by_group(
+    report,
+    df: pd.DataFrame,
+    group_col: str,
+    missing: Optional[str],
+    outliers: Optional[str],
+    stuck: Optional[str],
+    leakage: Optional[str],
+    verbose: bool,
+) -> pd.DataFrame:
+    """
+    Repair a panel entity by entity.
+
+    Each entity is repaired as its own independent time series using exactly the
+    single-series path, with a report view narrowed to that entity's issues, then
+    written back by **position**. Positional write-back matters: a panel index has
+    the same timestamp once per entity, so a label-based ``.loc`` assignment would
+    scatter one entity's repairs across all of them.
+
+    Leaky-column drops are applied once to the whole frame rather than per entity,
+    since a column either exists in the feature matrix or it does not.
+    """
+    from tsauditor.report.summary import GuardReport
+
+    out = df.copy()
+    log: List[Dict[str, Any]] = []
+    protected = report.metadata.get("target")
+
+    # 1. Leakage drops are frame-wide. Collect across every entity and the
+    #    panel-level checks, then drop once.
+    if leakage == "drop":
+        for col in report.leaky_columns():
+            if col in out.columns and col != protected and col != group_col:
+                out = out.drop(columns=col)
+                log.append(
+                    {"column": col, "action": "drop_column", "cells_changed": "—"}
+                )
+
+    groups = out[group_col].to_numpy()
+    payload_cols = [c for c in out.columns if c != group_col]
+
+    for key in pd.unique(groups):
+        positions = np.flatnonzero(groups == key)
+        if positions.size == 0:
+            continue
+
+        sub = out.iloc[positions][payload_cols]
+
+        # A report view containing only this entity's findings. group_col is
+        # removed from the metadata so the recursive call takes the ordinary
+        # single-series path.
+        view_metadata = {
+            k: v
+            for k, v in report.metadata.items()
+            if k not in ("group_col", "n_groups")
+        }
+        view = GuardReport(metadata=view_metadata)
+        for issue in report.all_issues:
+            if issue.group == str(key):
+                view.critical.append(issue)  # bucket does not matter; all_issues merges
+
+        repaired = apply_fixes(
+            view,
+            sub,
+            missing=missing,
+            outliers=outliers,
+            stuck=stuck,
+            leakage=None,  # already handled frame-wide above
+            verbose=False,
+        )
+
+        for col in repaired.columns:
+            out.iloc[positions, out.columns.get_loc(col)] = repaired[col].to_numpy()
+
+        for entry in view.last_fixes:
+            entry = dict(entry)
+            entry["group"] = str(key)
+            log.append(entry)
 
     report.last_fixes = log
     if verbose:

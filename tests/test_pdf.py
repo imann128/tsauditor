@@ -50,3 +50,57 @@ def test_to_pdf_without_df_still_renders(tmp_path):
     out = tmp_path / "nodf.pdf"
     rep.to_pdf(str(out))  # no df -> scorecard + issues, no charts
     assert out.read_bytes()[:4] == b"%PDF"
+
+
+# ── Panel reports (0.3.0) ────────────────────────────────────────────────────
+
+
+def _panel_report():
+    """
+    A panel scan, which produces Issues carrying `.group` plus panel-level PNL
+    codes. Neither existed before 0.3.0, so nothing else in this file covers
+    them.
+    """
+    import numpy as np
+    import pandas as pd
+
+    import tsauditor as tsa
+
+    dates = pd.date_range("2024-01-01", periods=120, freq="B")
+    parts = []
+    for i, ticker in enumerate(["AAA", "BBB", "CCC"]):
+        rng = np.random.default_rng(i)
+        price = 100 + 50 * i + np.cumsum(rng.normal(0, 1, 120))
+        ret = pd.Series(price).pct_change().to_numpy()
+        parts.append(
+            pd.DataFrame(
+                {
+                    "ticker": ticker,
+                    "price": price,
+                    "ret": ret,
+                    "direction": (ret > 0).astype(float),
+                },
+                index=dates,
+            )
+        )
+    panel = pd.concat(parts).sort_index()
+    report = tsa.scan(
+        panel, target="direction", group_col="ticker", run_stationarity=False
+    )
+    return panel, report
+
+
+def test_to_pdf_renders_a_panel_report(tmp_path):
+    """
+    Panel reports carry Issue.group and PNL* codes. The PDF exporter predates
+    both, so this pins that it still renders rather than raising on the new
+    fields.
+    """
+    panel, report = _panel_report()
+    assert report.is_panel
+    assert any(i.group is not None for i in report.all_issues)
+
+    out = tmp_path / "panel.pdf"
+    report.to_pdf(str(out), df=panel)
+    assert out.read_bytes()[:4] == b"%PDF"
+    assert out.stat().st_size > 1000

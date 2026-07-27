@@ -113,6 +113,7 @@ def test_guard_report_filter():
 def test_guard_report_to_json():
     report = GuardReport(
         critical=[Issue("leakage", "LEK001", CRITICAL, "Test.", "Col")],
+        info=[Issue("profiler", "PRF001", "info", "Info test.", "Col2")],
         metadata={"rows": 50},
     )
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
@@ -122,17 +123,25 @@ def test_guard_report_to_json():
         with open(path) as f:
             data = json.load(f)
         assert data["counts"]["critical"] == 1
+        assert data["counts"]["info"] == 1
+        assert data["counts"] == report.to_dict()["counts"]
         assert data["issues"][0]["code"] == "LEK001"
     finally:
         os.unlink(path)
 
 
 def test_guard_report_to_dict():
-    report = GuardReport(metadata={"rows": 10})
+    report = GuardReport(
+        critical=[Issue("leakage", "LEK001", CRITICAL, "Test.", "Col")],
+        warnings=[Issue("profiler", "PRF002", WARNING, "Warn.", "Col")],
+        info=[Issue("profiler", "PRF001", "info", "Info test.", "Col2")],
+        metadata={"rows": 10},
+    )
     d = report.to_dict()
     assert "metadata" in d
     assert "issues" in d
     assert "counts" in d
+    assert d["counts"] == {"critical": 1, "warnings": 1, "info": 1}
 
 
 # ── Validation ────────────────────────────────────────────────────────────────

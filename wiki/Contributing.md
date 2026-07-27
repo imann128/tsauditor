@@ -107,6 +107,62 @@ Write for someone competent in Python who may not know the statistics. Explain A
 
 ---
 
+## Where to start
+
+Look for issues labelled [`good first issue`](https://github.com/imann128/tsauditor/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+
+Three categories that do not require understanding the full leakage-detection design:
+
+**Documentation**
+
+- A sensor-domain worked example, equivalent to `examples/ogdc_leakage_case/` for finance
+- Docstring `Examples` sections in each `audit_*` function
+- Clarifications anywhere in this wiki
+
+**Edge-case tests**
+
+- Multi-column cases — most detectors are only tested with a *single* problem column ([see below](#a-known-gap-worth-filling))
+- Boundary conditions not currently covered
+
+**New domain presets**
+
+- `domain="crypto"` — 24/7 trading with no weekend gaps, historically high volatility
+- `domain="iot"` — sub-second frequencies, variable sensor reliability
+- `domain="healthcare"` — irregular sampling, clinically meaningful anomaly thresholds
+
+See [Domain Presets](Domain-Presets#proposing-a-new-domain-preset) for what a preset proposal needs.
+
+---
+
+## Reporting bugs and proposing features
+
+- **Bugs** — use the [Bug Report](https://github.com/imann128/tsauditor/issues/new?template=bug_report.md) template. Include your Python version, OS, `tsauditor` version, and a minimal reproduction. Synthetic data that triggers the issue is fine.
+- **Features** — use the [Feature Request](https://github.com/imann128/tsauditor/issues/new?template=feature_request.md) template. Anything touching the `leakage/` module needs statistical reasoning for the approach; that module is the project's core contribution and is held to a higher bar.
+- **Unsure which it is?** Open a [GitHub Discussion](https://github.com/imann128/tsauditor/discussions).
+
+---
+
+## A known gap worth filling
+
+Most detectors are tested with exactly **one** problem column, so a bug where a detector stops after the first finding would go unnoticed. This was found in `audit_equivalence` and fixed; the same shape of gap exists elsewhere.
+
+Verified by deliberately breaking each detector to report only its first result — all existing tests still passed:
+
+| file | tests | multi-column coverage |
+| ---- | ----- | --------------------- |
+| `test_point.py` | 4 | none |
+| `test_contextual.py` | 6 | none |
+| `test_correlation.py` | 12 | none |
+| `test_temporal.py` | 11 | none |
+| `test_validity.py` | 12 | none |
+| `test_asof.py` | 12 | none |
+
+One test per file: put two or three problem columns in the frame, assert every one is reported.
+
+**Check your own test is worth having.** Break the code on purpose — add `and not issues` to the flagging condition — confirm your test fails, then undo it. If it still passes with the code broken, it is not testing what you think.
+
+---
+
 ## Good first contributions
 
 **Documentation** — if something on this wiki is unclear or wrong, fix it. You do not need permission.

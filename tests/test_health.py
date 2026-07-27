@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from tsauditor.report.summary import GuardReport, Issue, WARNING, CRITICAL
+from tsauditor.report.summary import GuardReport, Issue, WARNING, CRITICAL, INFO
 
 
 def _idx(n):
@@ -76,3 +76,18 @@ def test_to_json_backward_compatible_without_df(tmp_path):
     assert "health" not in data
     assert data["issues"][0]["code"] == "LEK001"
     assert data["leaky_columns"] == ["x"]
+
+
+def test_to_dict_counts_include_info_and_match_json(tmp_path):
+    """to_dict()["counts"] must include info and agree with the to_json() payload."""
+    rep = GuardReport(
+        critical=[Issue("leakage", "LEK001", CRITICAL, "eq", "x")],
+        warnings=[Issue("profiler", "PRF002", WARNING, "clustered", "a")],
+        info=[Issue("profiler", "PRF010", INFO, "note", "b")],
+    )
+    p = tmp_path / "r.json"
+    rep.to_json(str(p))
+    payload = json.loads(p.read_text())
+    counts = rep.to_dict()["counts"]
+    assert counts == payload["counts"]
+    assert counts == {"critical": 1, "warnings": 1, "info": 1}

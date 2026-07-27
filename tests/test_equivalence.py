@@ -154,7 +154,7 @@ def test_scattered_nans_use_pairwise_overlap():
     assert "leak" in {i.column for i in issues}
     assert next(i for i in issues if i.column == "leak").evidence["n_obs"] < n
 
-    
+
 def test_multiple_leaky_features_all_flagged():
     """Two features both equivalent to target: both must be flagged."""
     n = 200

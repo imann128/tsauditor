@@ -76,55 +76,55 @@ def audit_equivalence(
     domain: Optional[str] = None,
 ) -> List[Issue]:
     """
-    Detect features that near-deterministically reproduce the target (lag 0).
+        Detect features that near-deterministically reproduce the target (lag 0).
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame.
-    target : str
-        Name of the target column. Must exist in ``df``.
-    continuous_threshold : float
-        Absolute Spearman correlation threshold for a continuous target.
-        Default 0.95.
-    binary_threshold : float
-        AUC-separation threshold for a binary target, applied to
-        ``max(AUC, 1 - AUC)``. Default 0.95. Loosen toward 0.90 to tolerate
-        a leak that carries some label noise — still far above any
-        legitimate predictor (~0.5-0.65).
-    min_obs : int
-        Minimum number of pairwise-complete (feature, target) observations
-        required to trust a score. Below this the column is skipped, because
-        a high score from a handful of points is spurious. Default 30.
-    domain : Optional[str]
-        Accepted for API consistency; thresholds are driven by target type,
-        not domain.
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input DataFrame.
+        target : str
+            Name of the target column. Must exist in ``df``.
+        continuous_threshold : float
+            Absolute Spearman correlation threshold for a continuous target.
+            Default 0.95.
+        binary_threshold : float
+            AUC-separation threshold for a binary target, applied to
+            ``max(AUC, 1 - AUC)``. Default 0.95. Loosen toward 0.90 to tolerate
+            a leak that carries some label noise — still far above any
+            legitimate predictor (~0.5-0.65).
+        min_obs : int
+            Minimum number of pairwise-complete (feature, target) observations
+            required to trust a score. Below this the column is skipped, because
+            a high score from a handful of points is spurious. Default 30.
+        domain : Optional[str]
+            Accepted for API consistency; thresholds are driven by target type,
+            not domain.
 
-    Returns
-    -------
-    List[Issue]
-         One LEK001 Issue per flagged feature column.
-       
-Examples
-    -------
-    A feature that is really just the target's sign - clear separation
-    between the two classes:
-    >>> import pandas as pd
-    >>> target = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0] *4
-    >>> feature_leaky = [8, 2, 7, 1, 9, 3, 8, 2, 7, 1] *4
-    >>> feature_clean = [100, 150, 120, 130, 90, 110, 140, 95, 105, 115] *4
-    >>> df = pd.DataFrame({
-    ...     "target": target,
-    ...     "feature_leaky": feature_leaky,
-    ...     "feature_clean": feature_clean,
-    ... })
-    >>> issues = audit_equivalence(df, target="target")
-    >>> len(issues)
-    1
-    >>> issues[0].code
-    'LEK001'
-    >>> issues[0].column
-    'feature_leaky'
+        Returns
+        -------
+        List[Issue]
+             One LEK001 Issue per flagged feature column.
+
+    Examples
+        -------
+        A feature that is really just the target's sign - clear separation
+        between the two classes:
+        >>> import pandas as pd
+        >>> target = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0] *4
+        >>> feature_leaky = [8, 2, 7, 1, 9, 3, 8, 2, 7, 1] *4
+        >>> feature_clean = [100, 150, 120, 130, 90, 110, 140, 95, 105, 115] *4
+        >>> df = pd.DataFrame({
+        ...     "target": target,
+        ...     "feature_leaky": feature_leaky,
+        ...     "feature_clean": feature_clean,
+        ... })
+        >>> issues = audit_equivalence(df, target="target")
+        >>> len(issues)
+        1
+        >>> issues[0].code
+        'LEK001'
+        >>> issues[0].column
+        'feature_leaky'
     """
     issues: List[Issue] = []
 

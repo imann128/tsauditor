@@ -100,3 +100,39 @@ def test_sensor_domain_lower_threshold(sensor_df):
     assert len(cluster_issues) == 1
     assert cluster_issues[0].evidence["cluster_threshold"] == 3
     assert cluster_issues[0].evidence["longest_consecutive_run"] == 3
+
+
+def test_two_columns_both_flagged(clean_financial_df):
+    """Two columns with high missing rate: both must be flagged."""
+    df = clean_financial_df.copy()
+    mask = np.arange(len(df)) % 5 != 0
+    df.iloc[mask, df.columns.get_loc("Price")] = np.nan
+    df.iloc[mask, df.columns.get_loc("Volume")] = np.nan
+    issues = audit_missing(df, domain="finance")
+    flagged = {i.column for i in issues if i.code == "PRF006"}
+    assert "Price" in flagged and "Volume" in flagged
+
+
+def test_leading_nans_trigger_cluster(clean_financial_df):
+    """NaNs at the start of the series must trigger PRF002."""
+    df = clean_financial_df.copy()
+    df.iloc[:10, df.columns.get_loc("Price")] = np.nan
+    issues = audit_missing(df, domain="finance")
+    cluster_issues = [
+    i for i in issues
+    if i.code == "PRF002" and i.column == "Price"
+    ]
+    assert len(cluster_issues) == 1
+
+
+def test_healthcare_domain_threshold(clean_financial_df):
+    """Healthcare domain flags missing values at a lower threshold."""
+    df = clean_financial_df.copy()
+    mask = np.arange(len(df)) % 10 != 0
+    df.iloc[mask, df.columns.get_loc("Price")] = np.nan
+    issues = audit_missing(df, domain="healthcare")
+    rate_issues = [
+    i for i in issues
+    if i.code == "PRF006" and i.column == "Price"
+    ]
+    assert len(rate_issues) == 1

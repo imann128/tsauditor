@@ -133,3 +133,21 @@ def test_few_observations_skipped():
     t = _iid_target(n, 8)
     df = pd.DataFrame({"target": t, "leak": t.shift(-1)}, index=_idx(n))
     assert audit_correlation_leakage(df, target="target", min_obs=30) == []
+
+
+def test_two_leaky_features_both_flagged():
+    """Two features both correlated to target: both must be flagged."""
+    n = 300
+    t = _iid_target(n, 12)
+    df = pd.DataFrame(
+    {
+    "target": t,
+    "leak1": t.shift(-1),
+    "leak2": t.shift(-2),
+    },
+    index=_idx(n),
+    )
+    flagged = {
+    i.column for i in audit_correlation_leakage(df, target="target")
+    }
+    assert "leak1" in flagged and "leak2" in flagged

@@ -114,3 +114,18 @@ def test_constant_column_does_not_crash_scan():
     df = pd.DataFrame({"price": np.linspace(1, 5, 80), "flag": np.ones(80)}, index=idx)
     report = tsa.scan(df, run_stationarity=True)  # must not raise
     assert not any(i.code == "PRF003" and i.column == "flag" for i in report.all_issues)
+
+
+def test_two_nonstationary_columns_both_flagged(base_date_index):
+    """Two random walks: both must be flagged PRF003."""
+    rng = np.random.default_rng(11)
+    df = pd.DataFrame(
+    {
+    "rw1": np.cumsum(rng.normal(0, 1, 100)),
+    "rw2": np.cumsum(rng.normal(0, 1, 100)),
+    },
+    index=base_date_index,
+    )
+    issues = audit_stationarity(df, alpha=0.05, min_obs=25)
+    flagged = {i.column for i in issues if i.code == "PRF003"}
+    assert "rw1" in flagged and "rw2" in flagged

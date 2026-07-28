@@ -12,6 +12,14 @@ Anything else raises `ValueError`.
 
 It changes **five thresholds across four checks**. Everything else in the library ignores it.
 
+## Why presets exist at all
+
+The same number means different things in different fields.
+
+A stock price staying flat for three consecutive trading days is unusual but not impossible — a trading halt does that. The same value repeating for three consecutive hours from a temperature sensor is almost certainly a dead instrument. One stuck-value threshold for both would either flood finance users with false positives or let real sensor failures through.
+
+Presets exist so you get sensible behaviour without configuring every parameter by hand. They are a convenience, not a requirement — see [Choosing a domain](#choosing-a-domain).
+
 ---
 
 ## The complete table
@@ -121,6 +129,30 @@ Do not use it for **intraday** financial data. The 5.0-day gap threshold means n
 **Use `"sensor"`** for physical measurements from instruments at any sampling rate: IoT telemetry, industrial monitoring, environmental data, medical devices. The stricter stuck-value detection is the main benefit.
 
 **Use `None`** — the default — for anything else, or when you are unsure. The defaults sit between the two presets and are reasonable across most data. You lose nothing critical: the leakage checks, which are the reason to use this library, are completely unaffected by the domain.
+
+**Suitable for `"finance"`:** equity prices, indices, FX rates, daily OHLCV data, return series.
+
+**Suitable for `"sensor"`:** IoT sensor streams, environmental monitoring, industrial equipment readings, Raspberry Pi GPIO logs.
+
+## Proposing a new domain preset
+
+New presets — `"crypto"`, `"iot"`, `"healthcare"` — are explicitly welcome as contributions. Each check that branches on `domain` needs one additional clause with justified thresholds.
+
+Sketches of what each would need to argue for:
+
+- **`"crypto"`** — 24/7 trading, so no weekend gaps at all; historically high volatility, so an even wider z-score threshold than finance
+- **`"iot"`** — sub-second frequencies and variable sensor reliability; the adaptive gap rule matters more than any fixed value
+- **`"healthcare"`** — irregular sampling by nature, and anomaly thresholds that have to be clinically meaningful rather than statistically convenient
+
+To propose one:
+
+1. Open a GitHub issue using the [Feature Request](https://github.com/imann128/tsauditor/issues/new?template=feature_request.md) template
+2. Propose specific threshold values **with reasoning for each** — why is this number right for that domain's real-world behaviour?
+3. Name at least one check where the difference from the existing presets matters most
+
+Every threshold in this library has a documented justification (fat tails for finance, weekend closures for the 5-day gap). A new preset is held to the same standard. See [Contributing](Contributing).
+
+---
 
 **When in doubt, run all three and compare.** They are cheap, and the differences are informative:
 

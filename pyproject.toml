@@ -51,7 +51,7 @@ polars = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "ruff==0.15.22",
+    "ruff==0.16.0",
     "matplotlib>=3.5,<4",
     "polars>=0.20",
     "pyarrow>=12",

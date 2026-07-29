@@ -516,5 +516,6 @@ class GuardReport:
             "counts": {
                 "critical": len(self.critical),
                 "warnings": len(self.warnings),
+                "info": len(self.info),
             },
         }

@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 import tsauditor as tsa
-from tsauditor.report.summary import GuardReport, Issue, CRITICAL, WARNING
+from tsauditor.report.summary import GuardReport, Issue, CRITICAL, WARNING, INFO
 from tsauditor.utils.validation import validate_dataframe, infer_frequency
 
 
@@ -133,6 +133,29 @@ def test_guard_report_to_dict():
     assert "metadata" in d
     assert "issues" in d
     assert "counts" in d
+
+
+def test_guard_report_to_dict_counts_match_to_json():
+    report = GuardReport(
+        critical=[Issue("leakage", "LEK001", CRITICAL, "Test.", "Col")],
+        warnings=[
+            Issue("profiler", "PRF001", WARNING, "Irregular frequency.", "Price")
+        ],
+        info=[Issue("profiler", "PRF003", INFO, "Note.", "Price")],
+        metadata={"rows": 10},
+    )
+    d = report.to_dict()
+    assert d["counts"] == {"critical": 1, "warnings": 1, "info": 1}
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        report.to_json(path)
+        with open(path) as f:
+            json_counts = json.load(f)["counts"]
+        assert d["counts"] == json_counts
+    finally:
+        os.unlink(path)
 
 
 # ── Validation ────────────────────────────────────────────────────────────────

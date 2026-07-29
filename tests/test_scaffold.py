@@ -138,8 +138,8 @@ def test_guard_report_to_dict():
 def test_guard_report_to_dict_counts_match_to_json():
     report = GuardReport(
         critical=[Issue("leakage", "LEK001", CRITICAL, "Test.", "Col")],
-        warnings=[Issue("profiler", "PRF003", WARNING, "Non-stationary.", "Price")],
-        info=[Issue("profiler", "PRF010", INFO, "Note.", "Price")],
+        warnings=[Issue("profiler", "PRF001", WARNING, "Irregular frequency.", "Price")],
+        info=[Issue("profiler", "PRF001", INFO, "Note.", "Price")],
         metadata={"rows": 10},
     )
     d = report.to_dict()

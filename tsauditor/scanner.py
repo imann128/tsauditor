@@ -93,9 +93,9 @@ def scan(
     Examples
     --------
     >>> import tsauditor as tsa
-    >>> report = tsa.scan(df, target="Direction", domain="finance")
-    >>> report.summary()
-    >>> report.to_json("report.json")
+    >>> report = tsa.scan(df, target="Direction", domain="finance")  # doctest: +SKIP
+    >>> report.summary()  # doctest: +SKIP
+    >>> report.to_json("report.json")  # doctest: +SKIP
     """
     # ── Validate domain argument ──────────────────────────────────────────────
     valid_domains = {"finance", "sensor", None}

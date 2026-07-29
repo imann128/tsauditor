@@ -18,7 +18,7 @@ your DataFrame
       ├─────────────── group_col given? ───────────────┐
       │ no                                          yes│
       ▼                                                ▼
-  run the checks once                    2a. panel structure  PNL001, PNL003
+  run the checks once                    2a. panel structure  PNL001, PNL003, PNL004
   on the whole frame                     2b. cross-sectional  PNL002
       │                                                │
       │                                  2c. for each entity: run the same
@@ -176,6 +176,7 @@ Three checks exist only for multi-entity data, and they look at the panel *as a 
 | ----- | ---- | ---------------- |
 | `audit_panel_structure` | PNL001 | Do all entities share a **common time index**? |
 | `audit_panel_structure` | PNL003 | Is any entity **too short** to audit meaningfully? |
+| `audit_panel_structure` | PNL004 | Do any rows have a **null entity id**, and so receive no checks at all? |
 | `audit_cross_sectional_leakage` | PNL002 | Does a feature rank entities in the order their **future** targets will fall? |
 
 PNL002 needs `target=` as well as `group_col=`. It exists because the per-entity checks degrade badly when a common market factor dominates: LEK002's detection of the same leak falls from 100% of entities to 22.5%, while the cross-sectional signal is unaffected.

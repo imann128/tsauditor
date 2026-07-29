@@ -173,6 +173,7 @@ report.summary()
 | panel | PNL001 | warning | Ragged panel (entities don't share a time index) |
 | panel | PNL002 | warning | Cross-sectional lookahead (feature knows future entity ordering) |
 | panel | PNL003 | info | Entity too short to audit meaningfully |
+| panel | PNL004 | warning | Rows with a null entity id get no checks at all |
 
 Codes marked **critical** block modeling; **warning** and **info** are advisory.
 
@@ -430,14 +431,14 @@ All three must pass; CI verifies them across Python 3.9–3.14 on Linux, Windows
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Featured On:
-Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.substack.com/p/data-science-weekly-issue-657)
+Featured in [PyCoder's Weekly Issue #745](https://pycoders.com/issues/745)
 
-[Article about tsauditor on LineUp Digest](https://lineupdigest.com/en/article/poka-vse-molcat-tsauditor-meniaet-podxod-k-upravleniiu-time-series-dannymi)
+Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.substack.com/p/data-science-weekly-issue-657)
 
 ## Status
 
 Beta (`0.3.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
-modules are implemented and tested (403 tests passing; CI across Python 3.9–3.14 on
+modules are implemented and tested (419 tests passing; CI across Python 3.9–3.14 on
 Linux, Windows, macOS).
 
 ## License

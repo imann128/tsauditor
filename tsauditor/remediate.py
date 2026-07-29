@@ -425,7 +425,25 @@ def _apply_fixes_by_group(
     groups = out[group_col].to_numpy()
     payload_cols = [c for c in out.columns if c != group_col]
 
+    # Rows with a null entity id are never scanned per-entity (see PNL004 in
+    # tsauditor.panel), so there is no entity-specific report view or
+    # distribution to repair them from. Leave them untouched, explicitly and
+    # logged once, rather than have them silently vanish from the loop below
+    # via `groups == key` never matching NaN.
+    null_rows = pd.isna(groups)
+    n_null = int(null_rows.sum())
+    if n_null > 0:
+        log.append(
+            {
+                "column": group_col,
+                "action": "skip_null_group_rows",
+                "cells_changed": n_null,
+            }
+        )
+
     for key in pd.unique(groups):
+        if pd.isna(key):
+            continue
         positions = np.flatnonzero(groups == key)
         if positions.size == 0:
             continue
@@ -504,9 +522,9 @@ def fix(
 
     Examples
     --------
-    >>> clean, report = tsa.fix(df, target="Direction", domain="finance")
-    >>> report.last_fixes          # exactly what changed
-    >>> report.leaky_columns()     # what it flagged
+    >>> clean, report = tsa.fix(df, target="Direction", domain="finance")  # doctest: +SKIP
+    >>> report.last_fixes          # exactly what changed  # doctest: +SKIP
+    >>> report.leaky_columns()     # what it flagged  # doctest: +SKIP
     """
     from tsauditor.scanner import scan
 

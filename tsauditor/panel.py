@@ -14,6 +14,7 @@ Issue codes raised
 PNL001  Ragged panel: entities do not share a common time index.  WARNING.
 PNL002  Cross-sectional lookahead in a feature.                   WARNING.
 PNL003  Entity too short to audit meaningfully.                   INFO.
+PNL004  Rows with a null entity id receive no checks at all.      WARNING.
 """
 
 from __future__ import annotations
@@ -66,6 +67,41 @@ def audit_panel_structure(
         raise ValueError(f"group_col '{group_col}' not found in DataFrame columns.")
     if df.empty:
         return issues
+
+    # ── PNL004: rows with no entity id ───────────────────────────────────────
+    # groupby(group_col) drops null keys by default (pandas' default
+    # dropna=True), which is the only sound choice for the checks below — there
+    # is no entity identity to compare coverage or short-history against. But
+    # that means these rows silently receive *no* auditing at all: they are
+    # excluded here, and scanner.py's per-entity loop (which drives from the
+    # same groupby) never sees them either. Report that explicitly rather than
+    # let it happen invisibly.
+    null_mask = df[group_col].isna()
+    n_null = int(null_mask.sum())
+    if n_null > 0:
+        issues.append(
+            Issue(
+                module="panel",
+                code="PNL004",
+                severity=WARNING,
+                description=(
+                    f"{n_null} of {len(df)} rows have a null value in the entity "
+                    f"column '{group_col}'. These rows cannot be assigned to any "
+                    f"entity, so they are excluded from every panel check and "
+                    f"every per-entity check (leakage, anomaly, profiler) — not "
+                    f"flagged clean, simply never examined. They are also left "
+                    f"unmodified by apply_fixes(), since there is no single "
+                    f"entity's distribution to repair them from."
+                ),
+                column=None,
+                evidence={
+                    "n_null_rows": n_null,
+                    "n_total_rows": len(df),
+                    "pct_null": round(100 * n_null / len(df), 2),
+                    "group_col": group_col,
+                },
+            )
+        )
 
     grouped = df.groupby(group_col, sort=True)
     coverage = {str(key): sub.index for key, sub in grouped}

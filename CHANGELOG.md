@@ -6,6 +6,43 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added — PNL004 reports rows with a null entity id
+
+- **New issue code `PNL004` (WARNING) for panel rows where `group_col` is
+  null.** ([#48](https://github.com/imann128/tsauditor/issues/48))
+
+  `df.groupby(group_col)` drops null keys by default, which is the only sound
+  choice for coverage/short-history comparisons — there is no entity identity
+  to compare. But it meant rows with a null entity id received **zero**
+  checks under `scan()` (not panel-level, not per-entity — they simply never
+  entered the loop) and were silently left untouched by `apply_fixes()`,
+  with nothing in the report saying so. A null-id row looked identical to a
+  clean one.
+
+  PNL004 reports the count and percentage of such rows up front. Behavior is
+  otherwise unchanged: these rows are still excluded from every other check
+  (there genuinely is nothing sound to compare them against) and still left
+  unrepaired by `apply_fixes()` (no single entity's distribution to repair
+  them from) — the skip in `apply_fixes()` is now explicit and logged in
+  `last_fixes` rather than an accidental consequence of `NaN != NaN`.
+
+### Internal
+
+- **Doctests now run in CI.** ([#39](https://github.com/imann128/tsauditor/issues/39))
+  Illustrative snippets in `scan()`, `fix()`, and `GuardReport`'s docstrings
+  reference a `df`/`report` from the reader's own session and are marked
+  `# doctest: +SKIP`; the ones that are fully self-contained (e.g.
+  `audit_equivalence`) are actually executed. Runs once per CI matrix
+  (ubuntu, Python 3.11), not on every cell — this catches a docstring going
+  stale after a signature or return-type change without adding 18x runtime.
+- **Consolidated `_encode_target`.** ([#40](https://github.com/imann128/tsauditor/issues/40))
+  `correlation.py` and `temporal.py` now import a shared `encode_target()`
+  from the new `leakage/_common.py` instead of each carrying a byte-identical
+  copy. `equivalence.py` keeps its own inline version deliberately — it
+  forces any binary target to 0.0/1.0 (needed for its AUC math), which is a
+  real behavioral difference from the shared helper's numeric-passthrough,
+  not incidental duplication.
+
 ### Added — PRF007 reports infinite values
 
 - **New issue code `PRF007` (CRITICAL) for `inf` and `-inf` in numeric columns,

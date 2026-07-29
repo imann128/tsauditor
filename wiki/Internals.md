@@ -68,9 +68,11 @@ Returns `None` when either class is absent, since AUC is undefined then.
 
 Interpretation: the probability that a randomly chosen class-1 point ranks above a randomly chosen class-0 point.
 
-### `_encode_target(series, name)` — `leakage/correlation.py`, `leakage/temporal.py`
+### `encode_target(series, name)` — `leakage/_common.py`
 
-Returns a float Series. Numeric input is cast; a binary categorical is mapped to 0.0/1.0 after sorting categories by their string form (so the mapping is deterministic across runs). Anything non-numeric with more than two categories raises.
+Shared by `correlation.py` and `temporal.py` (imported as `_encode_target`). Returns a float Series. Numeric input is cast unchanged; a *non-numeric* binary categorical is mapped to 0.0/1.0 after sorting categories by their string form (so the mapping is deterministic across runs). Anything non-numeric with more than two categories raises.
+
+`equivalence.py` does **not** use this helper, despite doing something that looks similar. Its binary path forces *any* two-valued target — numeric or categorical — to 0.0/1.0, because `_auc()` requires the positive class to be labeled exactly `1` (it does `y01.sum()` for the positive count and masks with `y01 == 1`). A numeric binary target like `{1, 2}` would silently break the AUC math if run through the shared helper's numeric-passthrough behavior. This is a real semantic difference, not incidental duplication — see the comment at the top of `audit_equivalence`'s binary branch.
 
 **This helper is duplicated verbatim in both modules.** `equivalence.py` has its own inline version of the same logic. Three copies of one function is a consolidation opportunity for a future refactor.
 
@@ -258,8 +260,6 @@ Suggestions live here rather than in the detectors so each detector does not car
 ## Known rough edges
 
 Honest notes for anyone working on the codebase.
-
-**`_encode_target` exists three times** — in `correlation.py`, `temporal.py`, and inline in `equivalence.py`.
 
 **Detector formulas are duplicated in `remediate.py`**, held together only by `tests/test_fix.py`.
 

@@ -68,7 +68,7 @@ tsauditor.scan(
 | `domain` | `str` or `None` | `None` | Threshold preset: `"finance"`, `"sensor"`, or `None`. See [Domain Presets](Domain-Presets). |
 | `available_at` | `dict` or `None` | `None` | Point-in-time availability for LEK004. Maps column → per-row publish timestamps (`pd.Series` on `df.index`) or a fixed `pd.Timedelta` lag. Only listed columns are checked. |
 | `constraints` | `dict` or `None` | `None` | Domain-validity rules (VAL001/VAL002). `{"bounds": {...}, "relations": [...]}`. A flat `{col: {...}}` mapping is treated as bounds. |
-| `group_col` | `str` or `None` | `None` | Entity column for **panel (long-format) data**. Each entity is audited as its own time series and every issue is tagged via `Issue.group`. Also enables PNL001/PNL003. See [Panel Data](Panel-Data). |
+| `group_col` | `str` or `None` | `None` | Entity column for **panel (long-format) data**. Each entity is audited as its own time series and every issue is tagged via `Issue.group`. Also enables PNL001/PNL003/PNL004. See [Panel Data](Panel-Data). |
 | `run_profiler` | `bool` | `True` | Run structural checks (PRF). |
 | `run_anomaly` | `bool` | `True` | Run anomaly checks (ANO). |
 | `run_leakage` | `bool` | `True` | Run leakage checks (LEK). Target-based checks still need `target`; LEK004 runs whenever `available_at` is given. |

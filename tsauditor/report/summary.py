@@ -144,9 +144,9 @@ class GuardReport:
 
         Examples
         --------
-        >>> report.filter(code="LEK001")
-        >>> report.filter(module="leakage", severity="critical")
-        >>> report.filter(group="AAPL")            # panel scans only
+        >>> report.filter(code="LEK001")  # doctest: +SKIP
+        >>> report.filter(module="leakage", severity="critical")  # doctest: +SKIP
+        >>> report.filter(group="AAPL")            # panel scans only  # doctest: +SKIP
         """
         issues = self.all_issues
         if code is not None:
@@ -183,7 +183,7 @@ class GuardReport:
 
         Examples
         --------
-        >>> report.groups_affected(code="LEK001", column="ret")
+        >>> report.groups_affected(code="LEK001", column="ret")  # doctest: +SKIP
         ['AAA', 'BBB', 'CCC']
         """
         matched = self.filter(code=code, column=column, severity=severity)
@@ -213,7 +213,7 @@ class GuardReport:
         Examples
         --------
         >>> import pandas as pd
-        >>> pd.DataFrame(report.prevalence())
+        >>> pd.DataFrame(report.prevalence())  # doctest: +SKIP
         """
         total = self.metadata.get("n_groups")
 
@@ -302,8 +302,8 @@ class GuardReport:
 
         Examples
         --------
-        >>> report = tsa.scan(df, target="Direction", domain="finance")
-        >>> clean = report.apply_fixes(df, missing="interpolate", outliers="clip")
+        >>> report = tsa.scan(df, target="Direction", domain="finance")  # doctest: +SKIP
+        >>> clean = report.apply_fixes(df, missing="interpolate", outliers="clip")  # doctest: +SKIP
         """
         from tsauditor.remediate import apply_fixes as _apply_fixes
 

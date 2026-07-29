@@ -171,7 +171,7 @@ One test per file: put two or three problem columns in the frame, assert every o
 
 **Test coverage for negative cases** — pick a detector and add a test proving it stays quiet on clean data.
 
-**Consolidate `_encode_target`** — it exists three times, in `leakage/correlation.py`, `leakage/temporal.py`, and inline in `leakage/equivalence.py`. Moving it to one shared helper is a clean, self-contained PR.
+**Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
 
 **Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
 

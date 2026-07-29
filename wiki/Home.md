@@ -44,7 +44,7 @@ That is the class of mistake `tsauditor` exists to catch automatically. See the 
 | [Anomaly Detectors](Detectors-Anomaly) | ANO001–ANO003 — stuck values, outliers, contextual spikes |
 | [Leakage Detectors](Detectors-Leakage) | LEK001–LEK004 — the core of the library |
 | [Validity Detectors](Detectors-Validity) | VAL001–VAL002 — declared domain rules |
-| [Panel Data](Panel-Data) | PNL001, PNL003 — multi-entity / long-format data |
+| [Panel Data](Panel-Data) | PNL001, PNL003, PNL004 — multi-entity / long-format data |
 
 **Reference material:**
 

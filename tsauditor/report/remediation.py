@@ -80,6 +80,12 @@ _REMEDIATIONS: Dict[str, str] = {
         "Either gather more history for them or exclude them from the audit, "
         "rather than reading their silence as a clean result."
     ),
+    "PNL004": (
+        "Assign an entity id to the {n_null_rows} rows with a null value in "
+        "'{group_col}', or drop them, before relying on this audit. They "
+        "currently receive no checks and no repair — their absence from every "
+        "other finding is not evidence of health."
+    ),
     # ── Anomaly ──────────────────────────────────────────────────────────────
     "ANO001": (
         "Investigate {target} for a stuck sensor or a forward-filled gap: the value "

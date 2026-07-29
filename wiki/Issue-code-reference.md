@@ -32,6 +32,7 @@ report.filter(code="LEK001")
 | PNL001 | WARNING | panel | Entities don't share a common time index | No | No |
 | PNL002 | WARNING | panel | Cross-sectional feature knows the future ordering | No | No |
 | PNL003 | INFO | panel | Entity too short to audit meaningfully | No | No |
+| PNL004 | WARNING | panel | Rows with a null entity id get no checks | No | No |
 
 Two columns worth noticing.
 
@@ -50,7 +51,7 @@ Most checks run automatically. These need an argument.
 | LEK001, LEK002, LEK003, LEK005 | `scan(target="...")` — silently skipped without it |
 | LEK004 | `scan(available_at={...})` |
 | VAL001, VAL002 | `scan(constraints={...})` |
-| PNL001, PNL003 | `scan(group_col="...")` |
+| PNL001, PNL003, PNL004 | `scan(group_col="...")` |
 | PNL002 | `scan(group_col="...", target="...")` |
 
 Silence from these codes means nothing unless you supplied the argument.
@@ -317,6 +318,14 @@ Some entities have fewer than 30 rows — below the `min_obs` floor the leakage 
 *Evidence:* `n_short_groups`, `n_groups`, `min_rows`, `shortest_groups`, `group_col`
 
 *What to do:* This exists to stop you misreading silence as health. A 12-row entity produces no LEK001 finding because the check *declined to score it*, not because it is clean. Gather more history or exclude those entities.
+
+### PNL004 — Rows with a null entity id
+
+**WARNING**, dataset-level.
+
+*Evidence:* `n_null_rows`, `n_total_rows`, `pct_null`, `group_col`
+
+*What to do:* Rows where `group_col` is null cannot be grouped into any entity, so `groupby(group_col)`'s default `dropna=True` silently excludes them from every panel and per-entity check, and `apply_fixes()` leaves them unmodified. A null-id row produces zero findings from anything — not evidence of health. Assign the missing entity id or drop the rows explicitly.
 
 ### PNL002 — Cross-sectional lookahead
 

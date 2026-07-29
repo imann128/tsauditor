@@ -158,7 +158,7 @@ Each row has: `code`, `module`, `severity`, `column`, `n_groups`, `total_groups`
 
 ## Panel-only checks
 
-Three checks exist that are meaningless for a single series.
+Four checks exist that are meaningless for a single series.
 
 ### PNL001 — Ragged panel
 
@@ -181,6 +181,16 @@ Some entities have fewer than 30 rows — below the `min_obs` floor the leakage 
 *Evidence:* `n_short_groups`, `n_groups`, `min_rows`, `shortest_groups`, `group_col`
 
 The point of this check is to stop you misreading silence as health. A 12-row entity produces no LEK001 finding, but that is because the check *declined to score it*, not because it is clean. Without PNL003 those entities look identical to genuinely healthy ones in the prevalence table.
+
+### PNL004 — Rows with a null entity id
+
+**WARNING**, dataset-level.
+
+Some rows have a null (`NaN`/`None`) value in `group_col`. `groupby(group_col)` drops null keys by default — there is no entity identity to assign coverage, short-history, or leakage findings to — so these rows are excluded from *every* check `scan()` runs, panel-level and per-entity alike. `apply_fixes()` leaves them untouched for the same reason: there is no single entity's distribution to repair them from.
+
+*Evidence:* `n_null_rows`, `n_total_rows`, `pct_null`, `group_col`
+
+This is the sharpest version of the "silence is not health" problem in this module: a null-id row produces exactly zero findings, in either direction, from anything. Before PNL004 existed this happened invisibly. If you see it, either backfill the entity id for those rows or drop them explicitly — do not treat their clean-looking report as a clean result.
 
 ### PNL002 — Cross-sectional lookahead
 

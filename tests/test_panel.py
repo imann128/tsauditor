@@ -346,6 +346,114 @@ def test_empty_panel_returns_no_issues():
     assert audit_panel_structure(empty, group_col="ticker") == []
 
 
+# ── PNL004: rows with a null entity id ───────────────────────────────────────
+
+
+def test_null_group_id_raises_pnl004():
+    parts = [_entity("AAA", 100), _entity("BBB", 100)]
+    df = pd.concat(parts).sort_index()
+    df.iloc[5:10, df.columns.get_loc("ticker")] = None
+
+    issues = audit_panel_structure(df, group_col="ticker")
+    pnl004 = [i for i in issues if i.code == "PNL004"]
+
+    assert len(pnl004) == 1
+    assert pnl004[0].severity == "warning"
+    assert pnl004[0].evidence["n_null_rows"] == 5
+    assert pnl004[0].evidence["n_total_rows"] == len(df)
+    assert pnl004[0].evidence["group_col"] == "ticker"
+
+
+def test_no_null_group_id_raises_no_pnl004():
+    parts = [_entity("AAA", 100), _entity("BBB", 100)]
+    df = pd.concat(parts).sort_index()
+
+    issues = audit_panel_structure(df, group_col="ticker")
+    assert [i for i in issues if i.code == "PNL004"] == []
+
+
+def test_pnl004_fires_even_with_a_single_named_entity():
+    """
+    A null-id row can appear even alongside just one real entity, and it
+    still deserves a report — audit_panel_structure's usual "one entity is
+    just a time series" early-return must not swallow this.
+    """
+    df = _entity("AAA", 100)
+    df.iloc[0:3, df.columns.get_loc("ticker")] = None
+
+    issues = audit_panel_structure(df, group_col="ticker")
+    assert [i.code for i in issues] == ["PNL004"]
+    assert issues[0].evidence["n_null_rows"] == 3
+
+
+def test_null_group_id_rows_get_no_per_entity_checks():
+    """
+    The actual bug (#48): rows that can't be assigned an entity silently
+    receive zero checks under the ordinary scan path, with nothing telling
+    the user they were skipped. PNL004 must be the only thing that mentions
+    them; no per-entity issue should ever carry a null/NaN group.
+    """
+    parts = [_entity("AAA", 200), _entity("BBB", 200)]
+    df = pd.concat(parts).sort_index()
+    df.iloc[0:20, df.columns.get_loc("ticker")] = None
+
+    report = tsa.scan(
+        df, target="direction", group_col="ticker", run_stationarity=False
+    )
+
+    assert report.filter(code="PNL004")
+    for issue in report.all_issues:
+        assert issue.group != "nan"
+        if issue.group is not None:
+            assert issue.group in TICKERS
+
+
+def test_pnl004_evidence_pct_is_correct():
+    df = _entity("AAA", 100)
+    df.iloc[0:25, df.columns.get_loc("ticker")] = None
+
+    issues = audit_panel_structure(df, group_col="ticker")
+    pnl004 = [i for i in issues if i.code == "PNL004"][0]
+    assert pnl004.evidence["pct_null"] == 25.0
+
+
+def test_pnl004_has_a_suggestion():
+    df = _entity("AAA", 100)
+    df.iloc[0:5, df.columns.get_loc("ticker")] = None
+    issue = [
+        i for i in audit_panel_structure(df, group_col="ticker") if i.code == "PNL004"
+    ][0]
+
+    assert "Review this issue" not in issue.suggestion
+    assert "ticker" in issue.suggestion
+
+
+def test_apply_fixes_leaves_null_group_rows_untouched():
+    """
+    The other half of #48: repair must not silently touch rows it has no
+    entity-specific report view for. They should come back exactly as they
+    went in, and the skip should be visible in last_fixes.
+    """
+    dates = pd.date_range("2024-01-01", periods=80, freq="D")
+    rng = np.random.default_rng(7)
+    values = 10 + rng.normal(0, 0.5, 80)
+    values[30:36] = np.nan  # a gap that WOULD be repaired if entity were known
+
+    ticker = pd.Series(["AAA"] * 80, dtype=object)
+    ticker.iloc[30:36] = None  # exactly the gap rows have no entity id
+
+    panel = pd.DataFrame({"ticker": ticker.to_numpy(), "price": values}, index=dates)
+
+    report = tsa.scan(panel, group_col="ticker", run_stationarity=False)
+    clean = report.apply_fixes(panel)
+
+    null_rows = panel["ticker"].isna()
+    assert clean.loc[null_rows, "price"].isna().sum() == null_rows.sum(), (
+        "null-group rows must be left exactly as found, not repaired"
+    )
+    assert any(e["action"] == "skip_null_group_rows" for e in report.last_fixes)
+
+
 # ── PNL002: cross-sectional lookahead ────────────────────────────────────────
 
 

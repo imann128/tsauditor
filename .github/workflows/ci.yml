@@ -70,6 +70,17 @@ jobs:
         run: |
           pytest --cov=tsauditor --cov-report=xml --cov-report=term-missing -v
 
+      # Doctests are illustrative snippets in public-API docstrings (scan(),
+      # fix(), GuardReport methods) — most are marked `# doctest: +SKIP`
+      # because they reference a `df`/`report` from the reader's own session,
+      # not a runnable example. Running this once (not across the full
+      # matrix) still catches the real failure mode: a signature or return
+      # type changing without the docstring being updated.
+      - name: Run doctests
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        run: |
+          pytest --doctest-modules tsauditor/
+
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
         uses: codecov/codecov-action@v7

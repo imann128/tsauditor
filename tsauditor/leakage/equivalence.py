@@ -145,6 +145,15 @@ def audit_equivalence(
     if is_binary:
         # Encode the two categories to 0/1 deterministically so the method
         # works for numeric (0/1) and categorical ("up"/"down") binaries alike.
+        #
+        # This intentionally does NOT use leakage._common.encode_target. That
+        # helper passes numeric targets through unchanged, which is correct
+        # for correlation.py/temporal.py (Spearman rank correlation only
+        # cares about order, not the actual values). Here it would be wrong:
+        # _auc() below requires y in {0.0, 1.0} specifically (it does
+        # y01.sum() to get the positive count and masks with y01 == 1), so a
+        # numeric binary target with labels like {1, 2} must still be
+        # remapped, not passed through.
         categories = sorted(target_raw.dropna().unique(), key=str)
         mapping = {categories[0]: 0.0, categories[1]: 1.0}
         y = target_raw.map(mapping)

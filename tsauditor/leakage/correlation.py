@@ -44,19 +44,8 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
+from tsauditor.leakage._common import encode_target as _encode_target
 from tsauditor.report.summary import Issue, WARNING
-
-
-def _encode_target(series: pd.Series, name: str) -> pd.Series:
-    """Return a numeric float target; encode a binary categorical as 0/1."""
-    if pd.api.types.is_numeric_dtype(series):
-        return series.astype(float)
-    categories = sorted(series.dropna().unique(), key=str)
-    if len(categories) == 2:
-        return series.map({categories[0]: 0.0, categories[1]: 1.0})
-    raise ValueError(
-        f"target '{name}' is non-numeric and not binary; cannot correlate."
-    )
 
 
 def _align(a: np.ndarray, b: np.ndarray, tau: int):

@@ -173,6 +173,8 @@ One test per file: put two or three problem columns in the frame, assert every o
 
 **Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
 
+**Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
+
 See [Internals — Known rough edges](Internals#known-rough-edges) for more.
 
 ### The threshold convention

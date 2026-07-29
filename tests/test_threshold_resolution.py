@@ -130,6 +130,52 @@ def test_explicit_stuck_window_beats_domain(short_stuck_run):
     assert len(_stuck(loose)) == 0
 
 
+def test_default_stuck_window_is_five():
+    """
+    Pins the undocumented-by-test default of 5 for domain=None. A run of
+    exactly 4 must not fire; 6 must.
+
+    Mutation-checked: lowering the default to 3 left every existing test in
+    this file passing, because the only fixture exercising the default
+    (short_stuck_run) has a 4-long run, which is under both 3 and 5.
+    """
+    rng = np.random.default_rng(9)
+
+    def _with_run(run_len):
+        values = list(rng.normal(20, 1, 40))
+        values[10 : 10 + run_len] = [7.0] * run_len
+        return pd.DataFrame(
+            {"x": values}, index=pd.date_range("2024-01-01", periods=40, freq="D")
+        )
+
+    assert audit_contextual_anomalies(_with_run(4)) == []
+    flagged = audit_contextual_anomalies(_with_run(6))
+    assert len(flagged) == 1
+    assert flagged[0].code == "ANO001"
+
+
+def test_sensor_spike_threshold_is_three():
+    """
+    Pins the sensor spike_threshold default of 3.0. A local z-score of ~3.4
+    sits between the sensor (3.0) and finance/None (3.5/4.0) defaults, so it
+    must be flagged under domain="sensor" and distinguishes 3.0 from anything
+    higher.
+
+    Mutation-checked: raising the sensor default to 5.0 left every existing
+    test in this file passing.
+    """
+    rng = np.random.default_rng(9)
+    values = rng.normal(50, 2, 60)
+    values[30] = 50 + 3.4 * 2  # local z roughly 3.4
+    df = pd.DataFrame(
+        {"x": values}, index=pd.date_range("2024-01-01", periods=60, freq="D")
+    )
+    flagged = [
+        i for i in audit_contextual_anomalies(df, domain="sensor") if i.code == "ANO003"
+    ]
+    assert len(flagged) == 1
+
+
 def test_zero_stuck_window_is_honoured(short_stuck_run):
     """
     stuck_window=0 is falsy but meaningful: every run longer than 0 is flagged.
@@ -140,13 +186,38 @@ def test_zero_stuck_window_is_honoured(short_stuck_run):
     assert issues[0].evidence["max_stuck_duration"] == 4
 
 
-def test_explicit_spike_window_is_honoured(short_stuck_run):
-    """spike_window must be respected rather than always falling back to 21."""
-    wide = audit_contextual_anomalies(short_stuck_run, spike_window=21)
-    narrow = audit_contextual_anomalies(short_stuck_run, spike_window=7)
-    # Both run without error and return lists; the window genuinely reaches the
-    # detector rather than being overwritten.
-    assert isinstance(wide, list) and isinstance(narrow, list)
+def test_explicit_spike_window_is_honoured():
+    """
+    spike_window must reach the detector rather than falling back to 21.
+
+    The previous version of this test asserted only that both calls returned a
+    list, which would have passed with the parameter ignored entirely. It needs
+    a fixture where the window size changes the verdict.
+
+    A 10-point bump of +6 sigma sits inside 200 points of N(50, 1). With a
+    narrow window the bump dominates its own local context and its edges read as
+    spikes; with a window wide enough to contain the bump and a lot of
+    surrounding data, the local mean absorbs it and nothing is flagged.
+    """
+    rng = np.random.default_rng(3)
+    values = rng.normal(50, 1, 200)
+    values[95:105] += 6
+    df = pd.DataFrame(
+        {"r": values}, index=pd.date_range("2024-01-01", periods=200, freq="D")
+    )
+
+    narrow = [
+        i for i in audit_contextual_anomalies(df, spike_window=7) if i.code == "ANO003"
+    ]
+    wide = [
+        i
+        for i in audit_contextual_anomalies(df, spike_window=101)
+        if i.code == "ANO003"
+    ]
+
+    assert len(narrow) == 1
+    assert narrow[0].evidence["n_spikes"] == 7
+    assert wide == []
 
 
 # ── audit_missing (already correct; pinned so it stays that way) ─────────────

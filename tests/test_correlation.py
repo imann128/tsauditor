@@ -133,3 +133,108 @@ def test_few_observations_skipped():
     t = _iid_target(n, 8)
     df = pd.DataFrame({"target": t, "leak": t.shift(-1)}, index=_idx(n))
     assert audit_correlation_leakage(df, target="target", min_obs=30) == []
+
+
+# ── Spurious correlation between independent persistent series (#49) ──────────
+#
+# LEK002 fires when the argmax over lags lands at a positive lag. For two
+# persistent series, spurious correlation is large by construction and which lag
+# wins is close to a coin flip, so a low `min_correlation` reports leakage
+# between columns that are statistically independent. These tests pin the
+# false-positive rate so a future change to the gate cannot silently undo the
+# 0.3.1 fix.
+
+
+def _independent_random_walks(seed, n=400):
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame(
+        {"y": np.cumsum(rng.normal(0, 1, n)), "f": np.cumsum(rng.normal(0, 1, n))},
+        index=_idx(n),
+    )
+
+
+def _independent_ar1(seed, n=400, rho=0.98):
+    rng = np.random.default_rng(seed)
+    a = np.zeros(n)
+    b = np.zeros(n)
+    for i in range(1, n):
+        a[i] = rho * a[i - 1] + rng.normal(0, 0.3)
+        b[i] = rho * b[i - 1] + rng.normal(0, 0.3)
+    return pd.DataFrame({"y": a, "f": b}, index=_idx(n))
+
+
+@pytest.mark.parametrize(
+    "builder, max_false_positives",
+    [
+        (_independent_random_walks, 25),
+        (_independent_ar1, 20),
+    ],
+    ids=["random_walk", "ar1_rho_0.98"],
+)
+def test_independent_persistent_series_rarely_flagged(builder, max_false_positives):
+    """
+    Both columns are generated from separate draws, so every flag is a false
+    positive. At the pre-0.3.1 default of 0.1 these measured 37/100 and 51/100.
+
+    The bounds are deliberately looser than the measured 13 and 8 so that
+    ordinary sampling variation does not make the suite flaky; they are tight
+    enough that a regression to the old gate fails.
+    """
+    flagged = sum(
+        bool(audit_correlation_leakage(builder(s), target="y")) for s in range(100)
+    )
+    assert flagged <= max_false_positives
+
+
+@pytest.mark.parametrize("persistent", [False, True], ids=["iid", "random_walk"])
+def test_genuine_lookahead_still_detected(persistent):
+    """
+    The gate must not cost true positives, on an i.i.d. target or a persistent
+    one. Both measured 100/100 before and after the change.
+
+    The persistent case is the one that rules out a margin-over-lag-0 rule: a
+    lookahead on a random walk correlates with the target at lag 0 almost as
+    strongly as at lag 1, so a flat margin drops this to 0%.
+    """
+    n = 400
+    detected = 0
+    for s in range(20):
+        rng = np.random.default_rng(5000 + s)
+        y = np.cumsum(rng.normal(0, 1, n)) if persistent else rng.normal(0, 1, n)
+        df = pd.DataFrame(
+            {"y": y, "f": pd.Series(y).shift(-1).bfill().to_numpy()}, index=_idx(n)
+        )
+        detected += bool(audit_correlation_leakage(df, target="y"))
+    assert detected == 20
+
+
+def test_default_min_correlation_is_the_fixed_value():
+    """Pins the default so #49 cannot be reverted without failing a test."""
+    import inspect
+
+    default = (
+        inspect.signature(audit_correlation_leakage)
+        .parameters["min_correlation"]
+        .default
+    )
+    assert default == 0.5
+
+
+def test_peak_correlation_keeps_its_sign():
+    """
+    `peak_correlation` is documented as signed, and the description prints it as
+    a Spearman value. A leak built from the *negated* future target is just as
+    much a leak, and reporting it as +1.0 would tell the user the feature tracks
+    the target when it inverts it.
+
+    Mutation-checked: reporting abs(r) instead of r leaves every other test in
+    this file passing.
+    """
+    n = 300
+    y = np.random.default_rng(0).normal(0, 1, n)
+    df = pd.DataFrame(
+        {"y": y, "f": -pd.Series(y).shift(-1).bfill().to_numpy()}, index=_idx(n)
+    )
+    issues = audit_correlation_leakage(df, target="y")
+    assert len(issues) == 1
+    assert issues[0].evidence["peak_correlation"] == -1.0

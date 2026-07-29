@@ -215,6 +215,7 @@ def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
             audit_frequency,
             audit_stationarity,
             audit_missing,
+            audit_non_finite,
         )
 
         # audit_frequency is run once and its issues routed by severity.
@@ -226,6 +227,11 @@ def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
             yield from audit_stationarity(df, domain=opts.domain)
 
         yield from audit_missing(df, domain=opts.domain)
+
+        # PRF007. Runs unconditionally and takes no threshold: an infinity is
+        # never a valid measurement, and every other detector discards it
+        # silently, so nothing else in the pipeline would report it.
+        yield from audit_non_finite(df)
 
     # ── Anomaly ───────────────────────────────────────────────────────────────
     if opts.run_anomaly:

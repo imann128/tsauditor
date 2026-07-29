@@ -49,6 +49,7 @@ These hold for every repair path and are worth relying on.
 | ANO003 contextual spikes | Yes | clip to local band / NaN |
 | ANO001 stuck values | Yes | NaN, then impute |
 | PRF002, PRF006 missing | Yes | impute |
+| PRF007 infinite values | **Yes, always** | NaN, then impute |
 | LEK001–LEK004 leakage | **Opt-in only** | drop the whole column |
 | PRF001, PRF004, PRF005 index problems | **No** | — |
 | PRF003 non-stationarity | **No** | — |
@@ -112,7 +113,15 @@ With `"nan"`, flagged cells are set to NaN and their columns are queued for impu
 
 **3. Stuck values** (only if `stuck="nan"`). Flagged runs become NaN and are queued for imputation.
 
-**4. Imputation** (only if `missing` is not `None`). Fills columns flagged PRF002/PRF006 **plus** every column NaN-ed in steps 2 and 3.
+**3b. Infinite values** (PRF007). Flagged infinities become NaN and are queued for imputation.
+
+This step is the one exception to "only if you asked for it": it runs unconditionally, with no parameter to disable it. Every other repair is opt-in because there is a legitimate reading under which the original value should be kept — an outlier may be a real market event, a stuck run may be a genuine trading halt. There is no such reading for an infinity. It is the residue of a division by zero, an overflow, or a log of a non-positive number, and keeping it makes the column's mean `inf`, its standard deviation `NaN`, and `scikit-learn` raise at `fit` time.
+
+If `missing=None`, the cells are left as NaN rather than imputed. NaN is honest about the value being unknown; `inf` is a false claim about its size.
+
+**Why it runs before imputation, not after.** `interpolate` filling a NaN that neighbours an infinity carries the infinity into the gap. On real data — five features built from the OGDC series by ordinary feature engineering — 19 infinities across 3 columns became **35** after `fix()` in 0.3.0, because `log_ret` had a NaN run sitting against an infinity. Converting first makes this impossible.
+
+**4. Imputation** (only if `missing` is not `None`). Fills columns flagged PRF002/PRF006 **plus** every column NaN-ed in steps 2, 3 and 3b.
 
 `"interpolate"` uses `method="time"` on a `DatetimeIndex` and `method="linear"` otherwise, with `limit_direction="both"` so leading and trailing NaNs are also filled.
 
@@ -172,14 +181,17 @@ report.health_score(df)
 
 rounded to one decimal place. Returns `100.0` if there are no numeric columns.
 
-**Which codes count.** Only these five:
+**Which codes count.** Only these six:
 
 ```
 PRF002, PRF006  (missing)
+PRF007          (infinite values)
 ANO001          (stuck)
 ANO002          (point outliers)
 ANO003          (contextual spikes)
 ```
+
+In practice PRF007 rarely moves the score, because ANO003 already marks those positions: an infinity's deviation from its local mean is infinite, so it always clears the spike threshold. Measured on the OGDC-derived features above, the score is 85.2 with or without PRF007 counted. It is included for correct attribution rather than to change the number.
 
 **Leakage is deliberately excluded.** A leaky column is a modeling risk, not a corrupt cell. Its values are perfectly valid data. Including leakage would conflate two different kinds of problem and make the score meaningless — you would not know whether a low score meant "dirty data" or "one bad feature."
 

@@ -205,7 +205,7 @@ Two details matter:
 Counts distinct cells implicated by a **quality** issue. Only these codes count:
 
 ```python
-_QUALITY_CODES = ("PRF002", "PRF006", "ANO001", "ANO002", "ANO003")
+_QUALITY_CODES = ("PRF002", "PRF006", "PRF007", "ANO001", "ANO002", "ANO003")
 ```
 
 Per column, it builds a boolean mask by OR-ing together the relevant per-code masks, then counts. Because it is a union, a cell flagged by both ANO002 and ANO003 counts **once**.

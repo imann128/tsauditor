@@ -335,6 +335,31 @@ def apply_fixes(
                     }
                 )
 
+    # 3b. Infinite values — always converted to NaN, then imputed with everything
+    #     else if `missing` is enabled.
+    #
+    #     Unconditional, unlike every other repair above, because there is no
+    #     reading of an infinity under which keeping it is correct: it is the
+    #     residue of a failed calculation upstream, not a measurement. Leaving it
+    #     poisons the mean and standard deviation of the whole column and makes
+    #     scikit-learn raise at fit time. If the caller disabled imputation
+    #     (`missing=None`) the cell is left as NaN, which is honest about the
+    #     value being unknown and is handled gracefully by pandas.
+    for col in _flagged("PRF007"):
+        if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
+            continue
+        mask = np.isinf(out[col].to_numpy(dtype=float, copy=False))
+        if mask.any():
+            out.loc[out.index[mask], col] = np.nan
+            nan_filled_cols.add(col)
+            log.append(
+                {
+                    "column": col,
+                    "action": "non_finite_to_nan",
+                    "cells_changed": int(mask.sum()),
+                }
+            )
+
     # 4. Imputation — fill flagged-missing columns plus anything we NaN-ed above.
     if missing is not None:
         impute_cols = set(missing_cols) | nan_filled_cols
@@ -517,7 +542,7 @@ def _print_log(log: List[Dict[str, Any]]) -> None:
 
 
 # ── Data Health Score ─────────────────────────────────────────────────────────
-_QUALITY_CODES = ("PRF002", "PRF006", "ANO001", "ANO002", "ANO003")
+_QUALITY_CODES = ("PRF002", "PRF006", "PRF007", "ANO001", "ANO002", "ANO003")
 
 
 def affected_cells(report, df: pd.DataFrame) -> int:
@@ -545,6 +570,13 @@ def affected_cells(report, df: pd.DataFrame) -> int:
         mask = pd.Series(False, index=s.index)
         if {"PRF002", "PRF006"} & codes:
             mask |= s.isna()
+        if "PRF007" in codes:
+            # Counted as corrupt cells in their own right. isinf is False for
+            # NaN, so a column flagged for both does not double-count: the
+            # union below is over distinct positions.
+            mask |= pd.Series(
+                np.isinf(s.to_numpy(dtype=float, copy=False)), index=s.index
+            )
         values = s.dropna()
         if "ANO002" in codes and len(values):
             om = _outlier_mask(values, z_thresh)

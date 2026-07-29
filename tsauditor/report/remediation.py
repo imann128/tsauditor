@@ -115,6 +115,15 @@ _REMEDIATIONS: Dict[str, str] = {
         "{target} has a high overall missing rate — consider dropping it or imputing "
         "with care, and check whether the missingness is informative."
     ),
+    "PRF007": (
+        "{target} contains {non_finite_count} infinite value(s), leaving "
+        "{n_finite_remaining} finite observation(s). Fix the upstream computation "
+        "that produced them — a division by zero, an overflow, or a log of a "
+        "non-positive number — rather than imputing, because an infinity records "
+        "that a calculation failed, not that a measurement was unavailable. "
+        "apply_fixes() will convert them to NaN and impute alongside genuine "
+        "missing values if you need a usable frame first."
+    ),
 }
 
 _FALLBACK = "Review this issue before using the data for modeling."

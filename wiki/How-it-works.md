@@ -27,7 +27,7 @@ your DataFrame
       │                                                │
       ├────────────────────┬───────────────────────────┘
       ▼
-3. profiler   (if run_profiler)     PRF001–PRF006
+3. profiler   (if run_profiler)     PRF001–PRF007
       │
       ▼
 4. anomaly    (if run_anomaly)      ANO001–ANO003
@@ -113,6 +113,7 @@ The profiler asks questions about the *shape* of your data, mostly ignoring the 
 | `audit_frequency` | PRF001, PRF004, PRF005 | Are timestamps unique, evenly spaced, and gap-free? |
 | `audit_stationarity` | PRF003 | Does this column have a stable mean over time? |
 | `audit_missing` | PRF002, PRF006 | Are values missing, and are they missing in clumps? |
+| `audit_non_finite` | PRF007 | Are there infinities? Neither missing nor an outlier, and invisible to both. |
 
 `audit_frequency` runs first because a duplicate timestamp invalidates everything downstream — it silently corrupts rolling windows, lags, and resampling. It is the only profiler check rated CRITICAL.
 

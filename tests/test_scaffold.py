@@ -98,7 +98,7 @@ def test_guard_report_filter():
     issues = [
         Issue("leakage", "LEK001", CRITICAL, "Target equivalence.", "ChangeP"),
         Issue("leakage", "LEK002", WARNING, "Positive lag peak.", "RSI"),
-        Issue("profiler", "PRF003", WARNING, "Non-stationary.", "Price"),
+        Issue("profiler", "PRF001", WARNING, "Large timestamp gap.", "Price"),
     ]
     report = GuardReport(
         critical=[issues[0]],

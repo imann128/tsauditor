@@ -219,7 +219,7 @@ audit_correlation_leakage(
     df: pd.DataFrame,
     target: str,
     max_lag: int = 10,
-    min_correlation: float = 0.1,
+    min_correlation: float = 0.5,
     min_obs: int = 30,
     domain: Optional[str] = None,
 ) -> List[Issue]
@@ -228,7 +228,7 @@ audit_correlation_leakage(
 | Parameter | Type | Default | What it does |
 | --------- | ---- | ------- | ------------ |
 | `max_lag` | `int` | `10` | Lags tested in each direction, so the search covers −10 to +10 |
-| `min_correlation` | `float` | `0.1` | The peak must reach this magnitude, so noise peaks are ignored |
+| `min_correlation` | `float` | `0.5` | The peak must reach this magnitude. Not a formality: see the limitation below |
 | `min_obs` | `int` | `30` | Minimum overlapping observations at a given lag for it to count |
 | `domain` | `str` or `None` | `None` | No effect |
 
@@ -286,7 +286,7 @@ for issue in audit_correlation_leakage(df, target="y"):
 ```
 
 ```
-tomorrow_y {'peak_lag': 1, 'peak_correlation': 1.0, 'min_correlation': 0.1, 'max_lag': 10, 'metric': 'spearman'}
+tomorrow_y {'peak_lag': 1, 'peak_correlation': 1.0, 'min_correlation': 0.5, 'max_lag': 10, 'metric': 'spearman'}
 ```
 
 `tomorrow_y` is caught at exactly lag +1 with correlation 1.0. `yesterday_y`, which peaks at lag −1, is correctly ignored — using yesterday's value today is not leakage, it is just a lag feature.
@@ -295,7 +295,18 @@ tomorrow_y {'peak_lag': 1, 'peak_correlation': 1.0, 'min_correlation': 0.1, 'max
 
 **This is a suspicion flag, not a proof — and the module says so in its own docstring.** In pure cross-correlation, a genuine strong predictor and a lookahead leak produce the same signature: a positive-lag peak. The only separator is magnitude. Real one-step-ahead predictive power in most domains is weak (|r| perhaps 0.05–0.2); leakage is strong (|r| above 0.5). Read `peak_correlation` and judge accordingly. This is why LEK002 is WARNING and not CRITICAL.
 
-**Autocorrelated targets create false peaks.** If the target is strongly persistent, a feature correlated with `target_t` is automatically correlated with `target_{t+1}` too, and noise can push the peak a step into the future. LEK003 exists precisely to control for this.
+**Autocorrelated targets create false peaks, and the effect is large.** If the target is strongly persistent, a feature correlated with `target_t` is automatically correlated with `target_{t+1}` too, and noise can push the peak a step into the future. LEK003 exists precisely to control for this.
+
+Measured over 100 trials per cell on 400-point series. Both columns are generated from *separate* draws, so every flag below is a false positive:
+
+| `min_correlation` | Two random walks | Two AR(0.98) | Genuine leak, i.i.d. target | Genuine leak, random-walk target |
+| ----------------- | ---------------- | ------------ | --------------------------- | -------------------------------- |
+| 0.1 (before 0.3.1) | 37% | 51% | 100% | 100% |
+| **0.5 (current default)** | **13%** | **8%** | **100%** | **100%** |
+
+Raising the gate cost no true positive in 200 trials, which is why the default changed. But 13% and 8% are still not small. **If your columns are price levels or other near-random-walk series, treat a lone LEK002 flag as weak evidence and check `peak_correlation` yourself.** LEK003 on the same data false-positives at 3% and 15%, so where the two disagree, trust LEK003.
+
+Why not require the positive-lag peak to beat the lag-0 correlation by a margin, as LEK003 effectively does? Because it does not work here. On a persistent target a genuine lookahead correlates with the target at lag 0 almost as strongly as at lag 1, so a flat margin suppresses real leaks along with false ones: a 0.10 margin cut false positives to 3% but dropped detection on a random-walk target from 100% to **0%**. LEK003 escapes this by dividing by the target's *measured* autocorrelation rather than subtracting a constant.
 
 **Only ±10 lags by default.** A leak at lag +15 is invisible unless you raise `max_lag`.
 
@@ -742,7 +753,7 @@ c = rng.uniform(2, 10, n)
 | LEK001 | **Very high** | An AUC of 1.0 or ρ of 0.99 is not a judgement call. Investigate immediately. |
 | LEK005 | **Very high** | An adjusted R² near 1.0 with a low best-single score is an arithmetic identity, not a coincidence. |
 | LEK004 | **High**, conditional on your metadata | The logic is deterministic; only your `available_at` can be wrong. |
-| LEK002 | **Medium** | Read `peak_correlation`. Above 0.5 is alarming; near 0.1 is probably noise. |
+| LEK002 | **Medium** | Read `peak_correlation`. Above 0.7 is alarming; near the 0.5 gate is weak evidence, especially on price-level columns. |
 | LEK003 | **Medium** | Read `excess_over_persistence`. Above 0.3 is strong; near 0.1 may be estimation noise. |
 
 **Remaining gaps.** LEK001–LEK004 are univariate. LEK005 covers groups of two or three by default (raise `max_group_size` for more), additive and multiplicative, signed or not — but not non-monotonic constructions like `x1² + sin(x2)`. For panel data, [PNL002](Panel-Data#pnl002--cross-sectional-lookahead) covers leaks living between entities. `tsauditor` reduces your risk substantially; it does not eliminate it.

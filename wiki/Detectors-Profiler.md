@@ -6,9 +6,10 @@ The profiler asks whether your data is **structurally sound** — before anyone 
 | -------- | ----- | ------ |
 | [`audit_frequency`](#audit_frequency) | PRF001, PRF004, PRF005 | `tsauditor/profiler/frequency.py` |
 | [`audit_missing`](#audit_missing) | PRF002, PRF006 | `tsauditor/profiler/missing.py` |
+| [`audit_non_finite`](#audit_non_finite) | PRF007 | `tsauditor/profiler/missing.py` |
 | [`audit_stationarity`](#audit_stationarity) | PRF003 | `tsauditor/profiler/stationarity.py` |
 
-All three raise `ValueError` if the DataFrame index is not a `DatetimeIndex`, and all three return an empty list for an empty DataFrame. All three examine **numeric columns only** — text columns are ignored entirely.
+All of them raise `ValueError` if the DataFrame index is not a `DatetimeIndex`, and all return an empty list for an empty DataFrame. All examine **numeric columns only** — text columns are ignored entirely.
 
 ---
 
@@ -327,3 +328,127 @@ Exactly one column flagged, and it is the right one. The random walk's p-value o
 **Flagging is expected and often correct.** Price columns *should* be flagged. PRF003 on a price series is the tool working, not a problem to fix.
 
 **`domain` does nothing here.** It is accepted so every detector has the same signature shape, but it has no effect on the test.
+
+---
+
+## `audit_non_finite`
+
+### What it detects
+
+Infinite values (`np.inf`, `-np.inf`) in numeric columns. **PRF007**, CRITICAL.
+
+### Signature
+
+```python
+audit_non_finite(df: pd.DataFrame) -> List[Issue]
+```
+
+No parameters beyond the frame. That is deliberate, and explained below.
+
+### The problem this solves
+
+An infinity is neither missing nor an outlier, and before this check existed it fell between every stool in the library.
+
+`isna()` returns False for an infinity, so PRF002 and PRF006 never saw one. Meanwhile every anomaly and leakage detector calls `.replace([np.inf, -np.inf], np.nan)` on its own working copy, because a single inf makes a column's mean `inf` and its standard deviation `NaN`, which would silently disable the detector's own comparisons. Eight modules did this. None of them reported it, because from each detector's point of view it was somebody else's problem.
+
+The result was a silent hole in the pipeline:
+
+| 200 rows, 10 consecutive bad values | Codes reported | After `fix()` |
+| ----------------------------------- | -------------- | ------------- |
+| 10 consecutive `NaN` | PRF002, plus anomaly codes | 0 NaN remaining |
+| 10 consecutive `inf` | anomaly codes only, none about the infs | **10 inf remaining** |
+
+A user could scan, see nothing relevant, fix, and still pass infinities to their model.
+
+### Why there is no threshold
+
+Every other threshold in this library exists because the underlying quantity has a legitimate non-zero range and the question is *how much is too much*. Some missingness is normal, so PRF006 needs a rate. Some autocorrelation is normal, so LEK003 needs an excess.
+
+That question does not arise for an infinity. It is never a measurement. It is the residue of a division by zero, a numeric overflow, or a log of a non-positive number somewhere upstream, and one of them means a calculation failed. So the threshold is one, and the function takes no threshold parameter.
+
+### Why CRITICAL
+
+Same reasoning as PRF004 (duplicate timestamps): it invalidates other checks rather than merely describing the data.
+
+A single infinity makes every statistic computed on the raw column meaningless, and scikit-learn raises at `fit` time rather than degrading gracefully. It also silently degrades this library's own output, since the other detectors are scoring a column with those rows discarded.
+
+### Issue codes and evidence
+
+| Key | Meaning |
+| --- | ------- |
+| `non_finite_count` | Total infinities in the column |
+| `positive_inf_count` | How many are `+inf` |
+| `negative_inf_count` | How many are `-inf` |
+| `non_finite_percentage` | As a percentage of all rows |
+| `n_finite_remaining` | Observations the other detectors actually work with |
+| `below_leakage_min_obs` | Whether `n_finite_remaining` is under 30 |
+| `leakage_min_obs` | The 30 above, so the comparison is visible |
+| `first_occurrence` | Timestamp of the first infinity |
+
+**Read `below_leakage_min_obs` first.** The leakage detectors (LEK001, LEK002, LEK003, LEK005) all require 30 observations before they will score a column. Below that they skip it *silently*. So a column with `below_leakage_min_obs: true` has not merely been measured imprecisely, it has not been checked for leakage at all, and nothing else in the report will tell you.
+
+The sign split matters more than it looks. All-positive infinities usually mean division by zero or overflow in one direction; a mix of both signs more often means a ratio whose denominator crosses zero, which is a different bug upstream.
+
+### When it does not fire
+
+- The column is not numeric
+- The column contains no infinities. `NaN` alone is PRF002 and PRF006's business, and the two categories never overlap, since `isinf` is False for `NaN`
+- The DataFrame is empty
+
+### Worked example
+
+```python
+import numpy as np, pandas as pd, tsauditor as tsa
+
+v = np.random.default_rng(1).normal(100, 5, 200)
+v[100:110] = np.inf
+v[50] = -np.inf
+df = pd.DataFrame({"x": v}, index=pd.date_range("2024-01-01", periods=200, freq="D"))
+
+report = tsa.scan(df, run_stationarity=False)
+issue = [i for i in report.all_issues if i.code == "PRF007"][0]
+print(issue.severity)
+print(issue.evidence)
+```
+
+```
+critical
+{'non_finite_count': 11, 'positive_inf_count': 10, 'negative_inf_count': 1,
+ 'non_finite_percentage': 5.5, 'n_finite_remaining': 189,
+ 'below_leakage_min_obs': False, 'leakage_min_obs': 30,
+ 'first_occurrence': '2024-02-20 00:00:00'}
+```
+
+### Repair
+
+`apply_fixes()` converts infinities to `NaN`, then imputes them alongside genuine missing values.
+
+```python
+fixed = report.apply_fixes(df)
+np.isinf(fixed["x"]).sum()    # 0
+fixed["x"].isna().sum()       # 0
+```
+
+This step runs **unconditionally**, unlike every other repair in the library, which only acts on flagged columns when you have enabled that repair type. There is no reading under which keeping an infinity is correct.
+
+With `missing=None` the cells are left as `NaN` rather than imputed:
+
+```python
+fixed = report.apply_fixes(df, missing=None)
+np.isinf(fixed["x"]).sum()    # 0
+fixed["x"].isna().sum()       # 11
+```
+
+`NaN` is honest about the value being unknown. `inf` is a false claim about its size.
+
+### Limitations and false positives
+
+**It cannot tell you which upstream computation produced the infinity**, only that one did. The `first_occurrence` timestamp and the sign split are the diagnostic starting points, not the answer.
+
+**Interpolation used to spread infinities, and this is why the repair runs first.** On real data, five features built from the OGDC series by ordinary feature engineering (`Returns / Return_lag1`, `log(Returns)`, `Volume / ChangeP`) contain 19 infinities across 3 columns, because those denominators are genuinely zero on some days. Before PRF007 existed, `fix()` returned **35**: `interpolate` filling a NaN that neighbours an infinity carries the infinity into the gap, so `log_ret` went from 6 to 22. The conversion step now runs before imputation for exactly this reason.
+
+**Imputing is a fallback, not a fix.** An infinity means a calculation failed. Interpolating over it produces a plausible-looking number in place of a bug you have not found, and the same bug will produce more infinities on your next batch. Treat `apply_fixes()` here as a way to get a usable frame while you go and fix the upstream code, not as a resolution.
+
+**It says nothing about very large finite values.** A column where a division by a near-zero denominator produced `1e308` rather than `inf` is just as broken and PRF007 will not fire. ANO002 may catch it as an outlier, but that is a different check with different thresholds and no guarantee.
+
+**Infinities in a non-numeric column are invisible.** A column of dtype `object` holding the string `"inf"` is not examined, because the whole library treats non-numeric columns as out of scope.

@@ -39,7 +39,7 @@ def test_leaky_columns_lists_only_leakage_columns():
         critical=[Issue("leakage", "LEK001", CRITICAL, "eq", "ChangeP")],
         warnings=[
             Issue("leakage", "LEK002", WARNING, "x", "RSI"),
-            Issue("profiler", "PRF003", WARNING, "ns", "Price"),
+            Issue("profiler", "PRF001", WARNING, "gap", "Price"),
         ],
     )
     assert r.leaky_columns() == ["ChangeP", "RSI"]
@@ -48,7 +48,7 @@ def test_leaky_columns_lists_only_leakage_columns():
 def test_suggestions_structure_and_severity_order():
     r = GuardReport(
         critical=[Issue("leakage", "LEK001", CRITICAL, "eq", "ChangeP")],
-        warnings=[Issue("profiler", "PRF003", WARNING, "ns", "Price")],
+        warnings=[Issue("profiler", "PRF001", WARNING, "gap", "Price")],
     )
     sg = r.suggestions()
     assert [s["severity"] for s in sg] == ["critical", "warning"]

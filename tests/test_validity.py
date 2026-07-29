@@ -48,6 +48,31 @@ def test_inclusive_bound_allows_boundary_value():
     assert audit_validity(df, bounds={"spread": {"min": 0}}) == []
 
 
+def test_inclusive_max_allows_boundary_value():
+    """Mirrors test_inclusive_bound_allows_boundary_value for the upper bound,
+    which nothing previously exercised."""
+    spread = np.full(10, 1.0)  # exactly at the inclusive upper bound
+    df = pd.DataFrame({"spread": spread}, index=_idx(10))
+    assert audit_validity(df, bounds={"spread": {"max": 1.0}}) == []
+
+
+def test_exclusive_max_catches_boundary_value():
+    """
+    Mirrors test_exclusive_min_catches_zero_spread for the upper bound.
+
+    Mutation-checked: before this test, changing the max_exclusive comparison
+    from `>=` to `>` (making it behave as if always inclusive) left every test
+    in this file passing, because nothing used max_exclusive at all.
+    """
+    spread = np.full(30, 0.5)
+    spread[5] = 1.0  # exactly at the bound: a violation only if exclusive
+    df = pd.DataFrame({"spread": spread}, index=_idx(30))
+    issues = audit_validity(df, bounds={"spread": {"max": 1.0, "max_exclusive": True}})
+    assert len(issues) == 1
+    assert issues[0].evidence["n_violations"] == 1
+    assert issues[0].evidence["observed_max"] == 1.0
+
+
 def test_nan_not_counted_as_violation():
     s = np.linspace(-1, 1, 20)
     s[3] = np.nan
@@ -124,3 +149,16 @@ def test_non_numeric_column_raises():
 def test_empty_rules_return_empty():
     df = pd.DataFrame({"a": np.arange(10.0)}, index=_idx(10))
     assert audit_validity(df) == []
+
+
+def test_multiple_relation_pairs_are_independent():
+    """Each declared pair is checked independently; a violation in one does not
+    suppress or affect another."""
+    df = pd.DataFrame(
+        {"a": np.full(20, 1.0), "b": np.full(20, 2.0), "c": np.full(20, 0.5)},
+        index=_idx(20),
+    )
+    issues = audit_validity(df, relations=[("a", "b"), ("b", "c")])
+    assert len(issues) == 1
+    assert issues[0].evidence["low_col"] == "b"
+    assert issues[0].evidence["high_col"] == "c"

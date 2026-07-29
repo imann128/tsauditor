@@ -100,3 +100,34 @@ def test_sensor_domain_lower_threshold(sensor_df):
     assert len(cluster_issues) == 1
     assert cluster_issues[0].evidence["cluster_threshold"] == 3
     assert cluster_issues[0].evidence["longest_consecutive_run"] == 3
+
+
+def test_missing_rate_threshold_is_inclusive():
+    """
+    A column exactly at the threshold must be flagged. The docs say "at least
+    30%", and the code uses `>=`.
+
+    Mutation-checked: changing `>=` to `>` left every other test in this file
+    passing, so the boundary was unpinned. Exactly-at-threshold is the one input
+    that distinguishes them, and it is a realistic value rather than a contrived
+    one.
+    """
+    import numpy as np
+    import pandas as pd
+
+    values = np.arange(100.0)
+    values[:30] = np.nan  # exactly 30%
+    df = pd.DataFrame(
+        {"x": values}, index=pd.date_range("2024-01-01", periods=100, freq="D")
+    )
+
+    # cluster_threshold set high so only PRF006 can fire
+    codes = [i.code for i in audit_missing(df, cluster_threshold=999)]
+    assert codes == ["PRF006"]
+
+    just_under = np.arange(100.0)
+    just_under[:29] = np.nan
+    df2 = pd.DataFrame(
+        {"x": just_under}, index=pd.date_range("2024-01-01", periods=100, freq="D")
+    )
+    assert [i.code for i in audit_missing(df2, cluster_threshold=999)] == []

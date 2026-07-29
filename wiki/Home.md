@@ -40,7 +40,7 @@ That is the class of mistake `tsauditor` exists to catch automatically. See the 
 | Page | What it covers |
 | ---- | -------------- |
 | [Issue Code Reference](Issue-code-reference) | Lookup table for every PRF / ANO / LEK / VAL code |
-| [Profiler Detectors](Detectors-Profiler) | PRF001–PRF006 — gaps, duplicates, missingness, stationarity |
+| [Profiler Detectors](Detectors-Profiler) | PRF001–PRF007 — gaps, duplicates, missingness, stationarity, infinite values |
 | [Anomaly Detectors](Detectors-Anomaly) | ANO001–ANO003 — stuck values, outliers, contextual spikes |
 | [Leakage Detectors](Detectors-Leakage) | LEK001–LEK004 — the core of the library |
 | [Validity Detectors](Detectors-Validity) | VAL001–VAL002 — declared domain rules |

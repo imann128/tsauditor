@@ -159,6 +159,7 @@ report.summary()
 | profiler | PRF004 | critical | Duplicate timestamps |
 | profiler | PRF005 | warning | Clustered gaps |
 | profiler | PRF006 | warning | High overall missing rate |
+| profiler | PRF007 | critical | Infinite values (`inf` / `-inf`) |
 | anomaly | ANO001 | warning | Stuck / repeated constant values |
 | anomaly | ANO002 | warning | Point outliers (z-score + IQR) |
 | anomaly | ANO003 | warning | Contextual spikes (local rolling z-score) |
@@ -403,15 +404,30 @@ See [`examples/`](examples) (indexed in [`examples/README.md`](examples/README.m
 ## Testing
 
 ```bash
-pytest -q
+pytest -q                  # full suite
+ruff check .               # lint
+ruff format --check .      # formatting
 ```
+
+CI runs all three across Python 3.9–3.14 on Linux, Windows and macOS (18 combinations).
+A pull request cannot merge unless every check is green.
 
 ## Contributing
 
 Contributions are welcome. Check [open issues](https://github.com/imann128/tsauditor/issues)
-for ideas, or look for the `good first issue` label. Run `pytest -q` before opening a PR —
-the full suite (164 tests) must pass, and CI will verify this across
-Python 3.9–3.14 on Linux, Windows, and macOS. See [CONTRIBUTING.md](CONTRIBUTING.md).
+for ideas, or look for the `good first issue` label.
+
+**Comment on an issue to be assigned before opening a pull request.** PRs not linked to
+an assigned issue will be closed. Before opening one, run:
+
+```bash
+pytest -q
+ruff check .
+ruff format --check .
+```
+
+All three must pass; CI verifies them across Python 3.9–3.14 on Linux, Windows and macOS.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Featured On:
 Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.substack.com/p/data-science-weekly-issue-657)
@@ -421,7 +437,7 @@ Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.subst
 ## Status
 
 Beta (`0.3.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
-modules are implemented and tested (363 tests passing; CI across Python 3.9–3.14 on
+modules are implemented and tested (403 tests passing; CI across Python 3.9–3.14 on
 Linux, Windows, macOS).
 
 ## License

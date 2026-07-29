@@ -4,6 +4,97 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added — PRF007 reports infinite values
+
+- **New issue code `PRF007` (CRITICAL) for `inf` and `-inf` in numeric columns,
+  and `apply_fixes()` now removes them.**
+  ([#46](https://github.com/imann128/tsauditor/issues/46))
+
+  Infinities passed through the entire pipeline unreported and unrepaired.
+  `isna()` is False for an infinity, so PRF002 and PRF006 never saw one, and
+  every anomaly and leakage detector quietly replaced it with NaN on its own
+  working copy so its arithmetic would not break. Nothing owned reporting it.
+  A user could run `scan()`, see no relevant issue, run `fix()`, and still hand
+  infinities to their model.
+
+  The asymmetry, on identical 200-row frames with 10 consecutive bad values:
+
+  |                     | codes reported                   | after `fix()` |
+  | ------------------- | -------------------------------- | ------------- |
+  | 10 consecutive NaN  | PRF002 (plus anomaly codes)      | 0 NaN left    |
+  | 10 consecutive inf  | anomaly codes only, none about the infs | 10 inf left |
+
+  **`fix()` could also multiply them.** Validated on real data: five features
+  built from the OGDC series by ordinary feature engineering (`Returns /
+  Return_lag1`, `log(Returns)`, `Volume / ChangeP`) produce 19 infinities across
+  3 columns, because those denominators are genuinely zero on some days. Under
+  0.3.0 `fix()` returned **35** of them: interpolating a NaN that neighbours an
+  infinity propagates the infinity into the gap, so `log_ret` went from 6 to 22.
+  On the same frame with PRF007, `fix()` returns 0.
+
+  **No threshold parameter, by design.** PRF006 needs one because some
+  missingness is normal and the question is how much is too much. That question
+  does not arise here: an infinity is never a measurement, only the residue of a
+  division by zero, an overflow, or a log of a non-positive number. One is a
+  defect, so the threshold is one.
+
+  **CRITICAL, matching PRF004.** It invalidates other checks rather than
+  describing the data. A single inf makes a column's mean inf and its standard
+  deviation NaN, and scikit-learn raises at `fit` time rather than degrading.
+
+  Evidence includes `n_finite_remaining` and `below_leakage_min_obs`. The second
+  is the one to read: below 30 finite observations the leakage detectors skip the
+  column entirely rather than merely losing precision.
+
+  **Repair.** `apply_fixes()` converts infinities to NaN and imputes them with
+  genuine missing values. This step runs unconditionally, unlike every other
+  repair, because there is no reading under which keeping an infinity is
+  correct. With `missing=None` the cell is left as NaN, which is honest about the
+  value being unknown rather than making a false claim about its size.
+
+  Infinite cells are now counted by `affected_cells()` in their own right. In
+  practice this rarely moves `health_score()`, because ANO003's spike mask
+  already marked those positions: the deviation of an infinity from its local
+  mean is infinite, so it always exceeds the spike threshold. Measured on real
+  data (OGDC-derived features, 19 infinities across 3 columns) the score is 85.2
+  either way. The change matters for correctness of attribution rather than for
+  the number.
+
+### Changed — LEK002 no longer reports leakage between independent columns
+
+- **`audit_correlation_leakage` default `min_correlation` raised from 0.1 to 0.5.**
+  ([#49](https://github.com/imann128/tsauditor/issues/49))
+
+  LEK002 fires when the peak cross-correlation over lags lands at a positive lag.
+  For two persistent series (a price level, a random walk, a slow AR process)
+  spurious correlation is large by construction while *which* lag wins is close to
+  a coin flip, so the old 0.1 gate was not a real gate. It reported leakage between
+  columns that were statistically independent.
+
+  Measured over 100 trials per cell on 400-point series. FP columns are two
+  independently generated series, so every flag is a false positive. TP columns are
+  a genuine t+1 lookahead:
+
+  | `min_correlation` | FP random walk | FP AR(0.98) | TP i.i.d. | TP random walk |
+  | ----------------- | -------------- | ----------- | --------- | -------------- |
+  | 0.1 (until now)   | 37%            | 51%         | 100%      | 100%           |
+  | 0.5 (new default) | 13%            | 8%          | 100%      | 100%           |
+
+  No true positive was lost in 200 trials.
+
+  **This is a behaviour change.** Features whose peak correlation at a positive lag
+  falls between 0.1 and 0.5 are no longer flagged. Given the rates above, most such
+  flags were noise. To restore the previous behaviour, pass
+  `min_correlation=0.1` explicitly.
+
+  This affects the `finance` preset most, because random-walk-like price series are
+  exactly the case the old gate handled worst.
+
+  13% and 8% remain higher than ideal. This is the validated improvement, not the
+  final answer; the underlying rule still uses a bare argmax over lags.
+
 ## [0.3.0] - 2026-07-26
 
 Panel (multi-entity) support, multivariate leakage detection, and two data-corruption

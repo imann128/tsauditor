@@ -22,7 +22,12 @@ tsa.__version__           # "0.3.0"
 The detector functions are not re-exported at the top level. Import them from their modules when you want to run one in isolation:
 
 ```python
-from tsauditor.profiler import audit_frequency, audit_missing, audit_stationarity
+from tsauditor.profiler import (
+    audit_frequency,
+    audit_missing,
+    audit_non_finite,
+    audit_stationarity,
+)
 from tsauditor.anomaly  import audit_point_anomalies, audit_contextual_anomalies
 from tsauditor.leakage  import (
     audit_equivalence, audit_correlation_leakage,
@@ -319,7 +324,7 @@ Repaired **copy** of `df`, fixing only flagged columns. Never touches the target
 
 **`health_score(df)`** → `float`
 
-Percentage of numeric cells not implicated by a quality issue (PRF002, PRF006, ANO001, ANO002, ANO003). Leakage, stationarity, index problems, and validity are excluded.
+Percentage of numeric cells not implicated by a quality issue (PRF002, PRF006, PRF007, ANO001, ANO002, ANO003). Leakage, stationarity, index problems, and validity are excluded.
 
 **Re-scans `df`**, so calling it on a `fix()` output gives a true "after" score. This costs a full scan — do not call it in a loop.
 
@@ -393,6 +398,7 @@ Each can be called directly on a DataFrame, bypassing `scan()`. All return `List
 | -------- | ----------- | -------------- |
 | `audit_frequency` | `tsauditor.profiler` | `domain` |
 | `audit_missing` | `tsauditor.profiler` | `cluster_threshold`, `missing_rate_threshold`, `domain` |
+| `audit_non_finite` | `tsauditor.profiler` | none — takes only the frame, [by design](Detectors-Profiler#why-there-is-no-threshold) |
 | `audit_stationarity` | `tsauditor.profiler` | `alpha`, `min_obs`, `max_lag` |
 | `audit_point_anomalies` | `tsauditor.anomaly` | `zscore_threshold`, `domain` |
 | `audit_contextual_anomalies` | `tsauditor.anomaly` | `stuck_window`, `spike_threshold`, `spike_window`, `domain`, `handle_missing` |

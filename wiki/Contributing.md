@@ -146,6 +146,8 @@ See [Domain Presets](Domain-Presets#proposing-a-new-domain-preset) for what a pr
 
 Most detectors are tested with exactly **one** problem column, so a bug where a detector stops after the first finding would go unnoticed. This was found in `audit_equivalence` and fixed; the same shape of gap exists elsewhere.
 
+**This is tracked in [#44](https://github.com/imann128/tsauditor/issues/44).** Comment there before starting so the work is not duplicated.
+
 Verified by deliberately breaking each detector to report only its first result — all existing tests still passed:
 
 | file | tests | multi-column coverage |
@@ -170,6 +172,8 @@ One test per file: put two or three problem columns in the frame, assert every o
 **Test coverage for negative cases** — pick a detector and add a test proving it stays quiet on clean data.
 
 **Consolidate `_encode_target`** — it exists three times, in `leakage/correlation.py`, `leakage/temporal.py`, and inline in `leakage/equivalence.py`. Moving it to one shared helper is a clean, self-contained PR.
+
+**Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
 
 See [Internals — Known rough edges](Internals#known-rough-edges) for more.
 

@@ -72,7 +72,7 @@ def audit_correlation_leakage(
     df: pd.DataFrame,
     target: str,
     max_lag: int = 10,
-    min_correlation: float = 0.1,
+    min_correlation: float = 0.5,
     min_obs: int = 30,
     domain: Optional[str] = None,
 ) -> List[Issue]:
@@ -88,8 +88,34 @@ def audit_correlation_leakage(
     max_lag : int
         Maximum lag (in periods) to test in each direction. Default 10.
     min_correlation : float
-        Minimum absolute correlation for a peak to be considered meaningful.
-        Prevents flagging near-zero noise correlations. Default 0.1.
+        Minimum absolute correlation for a peak at a positive lag to be
+        reported. Default 0.5.
+
+        This gate carries more weight than it appears to. The rule below fires
+        whenever the argmax over lags lands at a positive lag, and for two
+        persistent series (a price level, a random walk, a slow AR process)
+        spurious correlation is large by construction while *which* lag wins is
+        close to a coin flip. A low gate therefore reports leakage between
+        columns that are statistically independent.
+
+        Measured over 100 trials per cell on 400-point series, where FP columns
+        are two independently generated series and TP columns are a genuine
+        t+1 lookahead::
+
+            min_correlation   FP walk   FP AR(.98)   TP iid   TP walk
+            0.1 (until 0.3.1)    37%          51%     100%      100%
+            0.5 (current)        13%           8%     100%      100%
+
+        Raising the gate removed no true positive in 200 trials.
+
+        Note for anyone tempted to replace this with a margin over the lag-0
+        correlation, which is what LEK003 does: it does not work here. On a
+        persistent target a genuine lookahead correlates with the target at
+        lag 0 almost as strongly as at lag 1, so a flat margin suppresses real
+        leaks too. Measured, a 0.10 margin cut false positives to 3% but
+        dropped true detection on a random-walk target from 100% to 0%.
+        LEK003 escapes this by dividing by the target's *measured*
+        autocorrelation rather than subtracting a constant.
     min_obs : int
         Minimum overlapping observations at the peak lag for it to count.
         Default 30.

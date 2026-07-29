@@ -176,3 +176,55 @@ def test_all_nan_feature_skipped():
         index=_idx(n),
     )
     assert audit_equivalence(df, target="target") == []
+
+
+def test_continuous_threshold_boundary_is_pinned():
+    """
+    Pins the 0.95 continuous threshold.
+
+    Mutation-checked: lowering the default to 0.80 left every other test in this
+    file passing, because the existing fixtures are either near-perfect copies
+    (rho ~ 1.0) or clearly independent. Nothing sat in the 0.80-0.95 band where
+    the threshold actually decides.
+
+    A feature with rho ~ 0.93 is a realistic case: strongly related to the
+    target but not a reproduction of it, so LEK001 must stay quiet. That is the
+    distinction the threshold exists to draw.
+    """
+    n = 300
+    rng = np.random.default_rng(0)
+    y = rng.normal(0, 1, n)
+    idx = pd.date_range("2024-01-01", periods=n, freq="D")
+
+    near_copy = pd.DataFrame({"y": y, "f": y + rng.normal(0, 0.2, n)}, index=idx)
+    issues = audit_equivalence(near_copy, target="y")
+    assert len(issues) == 1
+    assert issues[0].evidence["spearman_rho"] >= 0.95
+    assert issues[0].evidence["threshold"] == 0.95
+
+    strong_but_not_equivalent = pd.DataFrame(
+        {"y": y, "f": y + rng.normal(0, 0.4, n)}, index=idx
+    )
+    assert audit_equivalence(strong_but_not_equivalent, target="y") == []
+
+
+def test_binary_threshold_boundary_is_pinned():
+    """
+    Pins the 0.95 binary threshold, for the same reason as above.
+
+    separation = |2*AUC - 1|. A feature that separates the classes well but not
+    perfectly must not be reported as reproducing the target.
+    """
+    n = 400
+    rng = np.random.default_rng(1)
+    yb = (rng.normal(0, 1, n) > 0).astype(int)
+    idx = pd.date_range("2024-01-01", periods=n, freq="D")
+
+    strong = pd.DataFrame({"y": yb, "f": yb + rng.normal(0, 0.9, n)}, index=idx)
+    issues = audit_equivalence(strong, target="y")
+    assert issues == [], "a strong but imperfect separator is not an equivalence"
+
+    perfect = pd.DataFrame({"y": yb, "f": yb.astype(float)}, index=idx)
+    flagged = audit_equivalence(perfect, target="y")
+    assert len(flagged) == 1
+    assert flagged[0].evidence["threshold"] == 0.95

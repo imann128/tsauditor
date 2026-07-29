@@ -1,6 +1,114 @@
 import numpy as np
 import pandas as pd
-from tsauditor.report.summary import Issue, WARNING
+from tsauditor.report.summary import Issue, WARNING, CRITICAL
+
+# Minimum observations the leakage detectors require before they will score a
+# column (audit_equivalence, audit_correlation_leakage, audit_temporal_leakage
+# and audit_combination_leakage all default to this). PRF007 reports when
+# discarding non-finite values drops a column below it, because at that point
+# the column is silently skipped by those checks rather than merely degraded.
+_LEAKAGE_MIN_OBS = 30
+
+
+def audit_non_finite(df: pd.DataFrame) -> list:
+    """
+    Audit numeric columns for infinite values (PRF007).
+
+    Why this is a separate check from missingness
+    ---------------------------------------------
+    ``np.inf`` is not a missing value and is not an outlier. ``isna()`` is False
+    for it, so PRF002 and PRF006 never see it, and every anomaly and leakage
+    detector in this library quietly replaces it with NaN on its own working
+    copy so its arithmetic does not break. The result before this check existed
+    was that an inf was reported by nothing and repaired by nothing: a user
+    could run ``scan()``, see no relevant issue, run ``fix()``, and still hand
+    infinities to their model.
+
+    Why there is no rate threshold
+    ------------------------------
+    PRF006 needs a threshold because some missingness is normal and the question
+    is how much is too much. That question does not arise here. An infinity is
+    never a measurement; it is the residue of a division by zero, an overflow, or
+    a log of zero somewhere upstream. One is a defect, so the threshold is one.
+    This is deliberate rather than an oversight, and it is why PRF007 takes no
+    threshold parameter.
+
+    Why CRITICAL
+    ------------
+    Matching PRF004 (duplicate timestamps), and for the same reason: it
+    invalidates other checks rather than merely describing the data. A single inf
+    makes a column's mean inf and its standard deviation NaN, so any statistic
+    computed on the raw column is meaningless, and scikit-learn raises at
+    ``fit`` time rather than degrading gracefully.
+
+    Evidence
+    --------
+    ``n_finite_remaining`` is the count the other detectors actually work with,
+    and ``below_leakage_min_obs`` reports whether that count falls under the 30
+    observations the leakage checks require. That second key matters more than
+    the raw count: below it, the column is not merely noisier, it is skipped
+    entirely by LEK001, LEK002, LEK003 and LEK005 with no message.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Time-series DataFrame with a DatetimeIndex.
+
+    Returns
+    -------
+    list
+        One PRF007 Issue per affected column.
+    """
+    issues = []
+
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("DataFrame index must be a pd.DatetimeIndex")
+
+    if df.empty:
+        return issues
+
+    for col in df.select_dtypes(include=[np.number]).columns:
+        values = df[col].to_numpy(dtype=float, copy=False)
+
+        # isinf is False for NaN, so the two categories do not overlap and the
+        # counts below are additive with the PRF002/PRF006 missing counts.
+        pos = int((values == np.inf).sum())
+        neg = int((values == -np.inf).sum())
+        total = pos + neg
+        if total == 0:
+            continue
+
+        finite_remaining = int(np.isfinite(values).sum())
+        first_pos = int(np.argmax(np.isinf(values)))
+
+        issues.append(
+            Issue(
+                module="profiler",
+                code="PRF007",
+                severity=CRITICAL,
+                description=(
+                    f"Column '{col}' contains {total} infinite value(s). These are "
+                    f"not missing values and not outliers: every statistic computed "
+                    f"on the raw column is invalid, and the anomaly and leakage "
+                    f"checks discard them before scoring."
+                ),
+                column=col,
+                evidence={
+                    "non_finite_count": total,
+                    "positive_inf_count": pos,
+                    "negative_inf_count": neg,
+                    "non_finite_percentage": round(100.0 * total / len(values), 4),
+                    "n_finite_remaining": finite_remaining,
+                    "below_leakage_min_obs": bool(finite_remaining < _LEAKAGE_MIN_OBS),
+                    "leakage_min_obs": _LEAKAGE_MIN_OBS,
+                    "first_occurrence": df.index[first_pos].strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
+                },
+            )
+        )
+
+    return issues
 
 
 def audit_missing(

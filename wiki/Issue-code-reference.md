@@ -18,6 +18,7 @@ report.filter(code="LEK001")
 | PRF004 | CRITICAL | profiler | Duplicate timestamps | No | No |
 | PRF005 | WARNING | profiler | Clustered gaps | No | No |
 | PRF006 | WARNING | profiler | High missing rate | Yes — impute | Yes |
+| PRF007 | CRITICAL | profiler | Infinite values (`inf` / `-inf`) | Yes — NaN then impute | Yes |
 | ANO001 | WARNING | anomaly | Stuck / frozen values | Yes — NaN then impute | Yes |
 | ANO002 | WARNING | anomaly | Point outliers (global) | Yes — clip or NaN | Yes |
 | ANO003 | WARNING | anomaly | Contextual spikes (local) | Yes — clip or NaN | Yes |
@@ -120,6 +121,20 @@ A column is at least **30%** missing overall (`missing_rate_threshold`).
 
 *What to do:* Consider dropping the column. If you impute, be aware you are inventing a third of it. Check whether the missingness is informative — sometimes "no value" is itself a signal.
 
+### PRF007 — Infinite values
+
+**CRITICAL**, per column.
+
+The column contains `inf` or `-inf`. There is **no threshold**: one is a defect, because an infinity is never a measurement, only the residue of a division by zero, an overflow, or a log of a non-positive number.
+
+*Evidence:* `non_finite_count`, `positive_inf_count`, `negative_inf_count`, `non_finite_percentage`, `n_finite_remaining`, `below_leakage_min_obs`, `leakage_min_obs`, `first_occurrence`
+
+*What to do:* Fix the upstream computation, do not impute. **Read `below_leakage_min_obs` first** — if true, fewer than 30 finite observations remain and LEK001, LEK002, LEK003 and LEK005 skipped the column silently, so it has not been checked for leakage at all.
+
+The sign split is diagnostic. All one sign usually means a division by zero or an overflow in one direction; both signs more often means a ratio whose denominator crosses zero, which is a different bug upstream.
+
+*Why CRITICAL:* like PRF004, it invalidates other checks rather than describing the data. A single infinity makes the column's mean `inf` and its standard deviation `NaN`, and `scikit-learn` raises at `fit` time.
+
 ---
 
 ## Anomaly codes (ANO)
@@ -189,11 +204,13 @@ A feature near-deterministically reproduces the target at lag 0: **AUC separatio
 
 **WARNING**, per column. Requires `target=`.
 
-The feature's peak cross-correlation with the target falls at a **positive** lag, meaning it aligns better with the target's future than its present. Searches lags −10 to +10 by default; the peak must reach |r| ≥ 0.1.
+The feature's peak cross-correlation with the target falls at a **positive** lag, meaning it aligns better with the target's future than its present. Searches lags −10 to +10 by default; the peak must reach |r| ≥ 0.5.
 
 *Evidence:* `peak_lag`, `peak_correlation`, `min_correlation`, `max_lag`, `metric`
 
-*What to do:* Read `peak_correlation`. Above 0.5 is alarming; near 0.1 is probably noise. This is a **suspicion flag, not a proof** — a genuine strong predictor and a lookahead leak produce the same signature, and only magnitude separates them.
+*What to do:* Read `peak_correlation`. Above 0.7 is alarming; near the 0.5 gate is weak evidence. This is a **suspicion flag, not a proof** — a genuine strong predictor and a lookahead leak produce the same signature, and only magnitude separates them.
+
+*Known false positives:* on near-random-walk columns (price levels especially) LEK002 flags **13%** of pairs that are statistically independent, and 8% of independent AR(0.98) pairs. The gate was raised from 0.1 to 0.5 in 0.3.1, which cut those from 37% and 51% at no cost to true detection. Where LEK002 and LEK003 disagree on such data, trust LEK003 — it false-positives at 3% and 15% on the same series. See [Detectors — Leakage](Detectors-Leakage#limitations-and-false-positives).
 
 ### LEK003 — Lookahead beyond persistence
 

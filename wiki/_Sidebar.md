@@ -8,11 +8,11 @@
 ### Detectors
 
 * [Issue Code Reference](Issue-code-reference)
-* [Profiler — PRF](Detectors-Profiler)
-* [Anomaly — ANO](Detectors-Anomaly)
-* [Leakage — LEK](Detectors-Leakage)
-* [Validity — VAL](Detectors-Validity)
-* [Panel — PNL](Panel-Data)
+* [Profiler, PRF](Detectors-Profiler)
+* [Anomaly, ANO](Detectors-Anomaly)
+* [Leakage, LEK](Detectors-Leakage)
+* [Validity, VAL](Detectors-Validity)
+* [Panel, PNL](Panel-Data)
 
 ### Reference
 

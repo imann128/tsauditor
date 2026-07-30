@@ -20,7 +20,7 @@ or let `scan()` do it by naming the column:
 report = tsa.scan(df, time_col="date")
 ```
 
-`tsauditor` deliberately refuses to guess. If your index is a plain `RangeIndex` (`0, 1, 2, ...`), it raises an error rather than silently reinterpreting those integers as nanosecond timestamps near 1970 — which would quietly corrupt every gap and frequency result.
+`tsauditor` deliberately refuses to guess. If your index is a plain `RangeIndex` (`0, 1, 2, ...`), it raises an error rather than silently reinterpreting those integers as nanosecond timestamps near 1970, which would quietly corrupt every gap and frequency result.
 
 **Recommended: name your target column.** The leakage checks compare each feature *against the target*, so without `target=` they cannot run at all and are silently skipped:
 
@@ -43,12 +43,12 @@ report = tsa.scan(df, target="Direction", domain="finance")
 report.summary()
 ```
 
-`scan()` returns a `GuardReport` — a structured Python object, not just printed text. Issues are bucketed into three severity levels:
+`scan()` returns a `GuardReport`, a structured Python object, not just printed text. Issues are bucketed into three severity levels:
 
 ```python
-report.critical    # list[Issue] — will corrupt training or evaluation
-report.warnings    # list[Issue] — worth reviewing, may be fine in context
-report.info        # list[Issue] — informational only
+report.critical    # list[Issue], will corrupt training or evaluation
+report.warnings    # list[Issue], worth reviewing, may be fine in context
+report.info        # list[Issue], informational only
 ```
 
 The single most useful line for a modeler:
@@ -61,7 +61,7 @@ report.leaky_columns()
 ['ChangeP', 'Returns']
 ```
 
-That is the shortlist of features to review or remove before training. `tsauditor` will not remove them for you — that is a modeling decision only you can make.
+That is the shortlist of features to review or remove before training. `tsauditor` will not remove them for you, that is a modeling decision only you can make.
 
 You can also filter programmatically:
 
@@ -91,7 +91,7 @@ print(issue.suggestion)   # what to do about it
 ChangeP
 
 Feature 'ChangeP' near-deterministically reproduces target 'Direction'
-(auc score=1.0000 >= 0.95 for binary target). Likely data leakage —
+(auc score=1.0000 >= 0.95 for binary target). Likely data leakage,
 review before modeling.
 
 {'metric': 'auc', 'auc': 1.0, 'separation': 1.0, 'threshold': 0.95,
@@ -102,7 +102,7 @@ the target variable and will leak. Keep it only if you can confirm it is
 genuinely available at prediction time.
 ```
 
-The `evidence` dict is the important part. It tells you *why*: the check used AUC (because the target is binary), scored 1.0 against a threshold of 0.95, and had 1,537 observations to work with. An AUC of exactly 1.0 means the feature separates the two classes perfectly — there is no ambiguity here.
+The `evidence` dict is the important part. It tells you *why*: the check used AUC (because the target is binary), scored 1.0 against a threshold of 0.95, and had 1,537 observations to work with. An AUC of exactly 1.0 means the feature separates the two classes perfectly, there is no ambiguity here.
 
 The keys inside `evidence` differ per issue code. Each is documented on the relevant detector page.
 
@@ -180,9 +180,9 @@ NaNs in original: 6
 NaNs in clean   : 0
 ```
 
-Health rose from 92.2 to 99.0, and the original still has its six NaNs — untouched, as promised.
+Health rose from 92.2 to 99.0, and the original still has its six NaNs, untouched, as promised.
 
-Note that `clip_outliers` changed 18 cells, not 1. The z-score and IQR rules together flag more points than just the one you planted; the IQR fence in particular is strict. This is worth understanding before trusting the defaults — see [Remediation](Remediation) for what each repair action does and how to tune it.
+Note that `clip_outliers` changed 18 cells, not 1. The z-score and IQR rules together flag more points than just the one you planted; the IQR fence in particular is strict. This is worth understanding before trusting the defaults, see [Remediation](Remediation) for what each repair action does and how to tune it.
 
 For fine-grained control:
 
@@ -202,7 +202,7 @@ clean = report.apply_fixes(
 
 Two checks cannot be inferred from your data's values alone, so you must declare the rules. They are off by default.
 
-**As-of leakage (LEK004)** — many series describe a period but are *published later*. CPI for January is not knowable on January 31st; it comes out in February. If the value sits at its reference date, every row before the real release date uses information that did not yet exist.
+**As-of leakage (LEK004)**, many series describe a period but are *published later*. CPI for January is not knowable on January 31st; it comes out in February. If the value sits at its reference date, every row before the real release date uses information that did not yet exist.
 
 ```python
 import pandas as pd
@@ -213,7 +213,7 @@ report = tsa.scan(df, available_at={"cpi": pd.Timedelta(days=30)})
 
 For real, ragged release schedules, pass a `pd.Series` of actual publication timestamps indexed by `df.index` instead of a fixed lag.
 
-**Validity rules (VAL001, VAL002)** — values that are *definitionally* impossible, not merely surprising:
+**Validity rules (VAL001, VAL002)**, values that are *definitionally* impossible, not merely surprising:
 
 ```python
 report = tsa.scan(df, constraints={
@@ -239,13 +239,13 @@ report.to_pdf("report.pdf", df=df, fixed_df=clean)
 array = tsa.adapters.to_timesfm(df, target_col="price", domain="finance")
 ```
 
-The TimesFM adapter never imports `timesfm` — it audits, repairs, verifies the result contains no NaN or infinity, and hands you a plain NumPy array. You own the model.
+The TimesFM adapter never imports `timesfm`, it audits, repairs, verifies the result contains no NaN or infinity, and hands you a plain NumPy array. You own the model.
 
 ---
 
 ## A note on speed
 
-The ADF stationarity test (PRF003) dominates the runtime of a scan — it fits many regressions per column. If you only need structural, anomaly, and leakage checks, turn it off:
+The ADF stationarity test (PRF003) dominates the runtime of a scan, it fits many regressions per column. If you only need structural, anomaly, and leakage checks, turn it off:
 
 ```python
 report = tsa.scan(df, target="Direction", run_stationarity=False)
@@ -257,7 +257,7 @@ Other toggles: `run_profiler`, `run_anomaly`, `run_leakage`, all `True` by defau
 
 ## Where to go next
 
-- [How It Works](How-it-works) — what `scan()` does internally, in order
-- [Leakage Detectors](Detectors-Leakage) — the four leakage checks, explained properly
-- [OGDC Case Study](OGDC-case-study) — the real-world leak this library was built for
-- [API Reference](API-Reference) — every parameter of every public function
+- [How It Works](How-it-works), what `scan()` does internally, in order
+- [Leakage Detectors](Detectors-Leakage), the four leakage checks, explained properly
+- [OGDC Case Study](OGDC-case-study), the real-world leak this library was built for
+- [API Reference](API-Reference), every parameter of every public function

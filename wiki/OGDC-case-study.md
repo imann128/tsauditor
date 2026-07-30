@@ -75,7 +75,7 @@ MACD       pearson = +0.0571
 
 **0.63.** A feature that *mathematically determines* the target correlates with it at 0.63.
 
-That is a moderate correlation. It is the kind of number you would see from a decent technical indicator. Any leakage check built on a Pearson threshold — 0.95, 0.9, even 0.8 — waves this straight through. And 0.63 is *higher* than RSI's 0.29, so it does not even stand out as anomalous within its own feature set.
+That is a moderate correlation. It is the kind of number you would see from a decent technical indicator. Any leakage check built on a Pearson threshold, 0.95, 0.9, even 0.8, waves this straight through. And 0.63 is *higher* than RSI's 0.29, so it does not even stand out as anomalous within its own feature set.
 
 This is not a subtle statistical edge case. It is a hard mathematical ceiling.
 
@@ -91,9 +91,9 @@ When you compute Pearson correlation between a continuous variable and a **binar
 
 **even when the relationship is perfectly deterministic.**
 
-The intuition: Pearson measures how well a *straight line* fits the relationship. But the true relationship here is a step function — everything below zero maps to 0, everything above maps to 1. No straight line fits a step function well. Pearson is measuring the wrong thing, and its answer is capped by the geometry of the question, not by the strength of the relationship.
+The intuition: Pearson measures how well a *straight line* fits the relationship. But the true relationship here is a step function, everything below zero maps to 0, everything above maps to 1. No straight line fits a step function well. Pearson is measuring the wrong thing, and its answer is capped by the geometry of the question, not by the strength of the relationship.
 
-So a Pearson-based leakage detector cannot work on binary targets. Not "works poorly" — cannot work. The signal it needs is mathematically unavailable to it.
+So a Pearson-based leakage detector cannot work on binary targets. Not "works poorly", cannot work. The signal it needs is mathematically unavailable to it.
 
 ---
 
@@ -103,8 +103,8 @@ For binary targets, LEK001 uses **AUC separation** via the Mann-Whitney rank sta
 
 AUC asks a different question: *if I pick one random day where Direction was 1 and one where it was 0, how often does the feature rank the up-day higher?*
 
-- 0.5 — no separation. Useless feature.
-- 1.0 — perfect separation. Every up-day outranks every down-day.
+- 0.5, no separation. Useless feature.
+- 1.0, perfect separation. Every up-day outranks every down-day.
 
 This question has no ceiling, because it is about *ordering*, not linear fit. A step function separates the classes perfectly, and AUC reports exactly that.
 
@@ -131,7 +131,7 @@ Side by side:
 
 | Metric | `ChangeP` vs `Direction` | Verdict at a 0.95 threshold |
 | ------ | ------------------------ | --------------------------- |
-| Pearson | 0.6268 | Clean — ship it |
+| Pearson | 0.6268 | Clean: ship it |
 | **AUC separation** | **1.0000** | **CRITICAL leak** |
 
 Same data, same relationship, opposite conclusions. The choice of metric *is* the whole detector.
@@ -168,9 +168,9 @@ PRF001 ×  1    one large timestamp gap
 
 Two observations worth drawing out.
 
-**The 38 anomaly warnings are mostly not problems.** Financial return series have fat tails; ANO002 and ANO003 fire on real market moves. `domain="finance"` already loosens these thresholds and they still fire. This is the expected cost of a warning-level check on financial data — see [Anomaly Detectors](Detectors-Anomaly#limitations-and-false-positives).
+**The 38 anomaly warnings are mostly not problems.** Financial return series have fat tails; ANO002 and ANO003 fire on real market moves. `domain="finance"` already loosens these thresholds and they still fire. This is the expected cost of a warning-level check on financial data, see [Anomaly Detectors](Detectors-Anomaly#limitations-and-false-positives).
 
-**Health is 82.5%, and the leak contributes nothing to that number.** The score measures cell-level corruption only. The two columns that would destroy this model are perfectly clean data — they are simply the wrong data to have. This is exactly why leakage is excluded from the health score: a single number cannot meaningfully combine "3% of cells are odd" with "your target is in your feature matrix."
+**Health is 82.5%, and the leak contributes nothing to that number.** The score measures cell-level corruption only. The two columns that would destroy this model are perfectly clean data, they are simply the wrong data to have. This is exactly why leakage is excluded from the health score: a single number cannot meaningfully combine "3% of cells are odd" with "your target is in your feature matrix."
 
 **Do not read a good health score as a clean bill of health.** 82.5% with two CRITICAL leaks is a dataset that will produce a worthless model.
 
@@ -207,7 +207,7 @@ report.leaky_columns()
 ['ChangeP', 'Returns']
 ```
 
-For this dataset the remedy is to drop both and train on the genuinely predictive features that remain — the lagged returns, rolling statistics, RSI, and MACD, all of which are computed from *past* data only.
+For this dataset the remedy is to drop both and train on the genuinely predictive features that remain, the lagged returns, rolling statistics, RSI, and MACD, all of which are computed from *past* data only.
 
 If you want `tsauditor` to drop them:
 
@@ -217,7 +217,7 @@ clean = report.apply_fixes(df, leakage="drop")
 
 This is opt-in and off by default, because removing columns changes your feature matrix and should always be a deliberate act.
 
-Note that the correct remedy is not always deletion. For [LEK004](Detectors-Leakage#lek004--as-of-availability-leakage) — a value published after the timestamp it sits at — the fix is to *shift* the column to its release schedule. The data is fine; the alignment is wrong. Deleting it throws away a legitimate feature.
+Note that the correct remedy is not always deletion. For [LEK004](Detectors-Leakage#lek004-as-of-availability-leakage), a value published after the timestamp it sits at, the fix is to *shift* the column to its release schedule. The data is fine; the alignment is wrong. Deleting it throws away a legitimate feature.
 
 ---
 
@@ -225,7 +225,7 @@ Note that the correct remedy is not always deletion. For [LEK004](Detectors-Leak
 
 **Suspicion should scale with your score.** Above ~85% on daily equity direction, or above ~95% on any hard problem, treat the result as a bug report until proven otherwise. Investigating a great result is not pessimism; it is the only way to find this class of error.
 
-**Check how your target was constructed.** This leak came from a target *defined in terms of* a feature that stayed in the matrix. Whenever the target is derived — a binarized return, a thresholded value, a lagged difference — trace every input to that definition and make sure none of them survive as features.
+**Check how your target was constructed.** This leak came from a target *defined in terms of* a feature that stayed in the matrix. Whenever the target is derived, a binarized return, a thresholded value, a lagged difference, trace every input to that definition and make sure none of them survive as features.
 
 **Do not use Pearson to detect leakage against a binary target.** The 0.798 ceiling makes it structurally incapable of the job. Use a rank or separation metric.
 

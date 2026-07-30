@@ -65,6 +65,17 @@ def test_audit_stationarity_short_col():
     assert len(short_issues) == 0
 
 
+def test_exactly_min_obs_is_scored_not_skipped():
+    """The gate is `< min_obs`, so exactly min_obs observations must still be
+    tested, not skipped. (Distinct from test_audit_stationarity_short_col,
+    which is below the boundary.)"""
+    idx = pd.date_range("2026-01-01", periods=25, freq="D")
+    rw = np.cumsum(np.random.default_rng(11).normal(0, 1, 25))
+    df = pd.DataFrame({"rw_col": rw}, index=idx)
+    issues = audit_stationarity(df, min_obs=25)
+    assert any(i.column == "rw_col" and i.code == "PRF003" for i in issues)
+
+
 def test_audit_stationarity_non_datetime_index():
     # 4. Non-DatetimeIndex
     df = pd.DataFrame({"a": [1, 2, 3]}, index=[1, 2, 3])
@@ -100,6 +111,30 @@ def test_audit_stationarity_with_nan_and_inf(base_date_index):
 
     issues = audit_stationarity(df, min_obs=25)
     assert isinstance(issues, list)
+
+
+def test_two_valued_column_is_still_tested(monkeypatch):
+    """The constant-column guard is `nunique < 2`; a column with exactly two
+    distinct values is not constant and must still reach adfuller(), not be
+    silently skipped. An alternating +-1 series is stationary either way, so
+    the output (no PRF003) can't distinguish tested-and-passed from
+    skipped -- patch adfuller itself to observe whether it was called."""
+    import tsauditor.profiler.stationarity as stat_mod
+
+    calls = []
+    real_adfuller = stat_mod.adfuller
+
+    def spy(series, *args, **kwargs):
+        calls.append(series)
+        return real_adfuller(series, *args, **kwargs)
+
+    monkeypatch.setattr(stat_mod, "adfuller", spy)
+
+    idx = pd.date_range("2020-01-01", periods=40, freq="D")
+    two_valued = np.where(np.arange(40) % 2 == 0, 1.0, -1.0)
+    df = pd.DataFrame({"alt": two_valued}, index=idx)
+    audit_stationarity(df, min_obs=25)
+    assert len(calls) == 1
 
 
 def test_constant_column_does_not_crash_scan():

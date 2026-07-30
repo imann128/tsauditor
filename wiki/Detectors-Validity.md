@@ -13,7 +13,7 @@ One function, two issue codes, in `tsauditor/validity.py`.
 
 ## Statistically surprising vs. definitionally wrong
 
-The [anomaly module](Detectors-Anomaly) finds values that are *statistically* surprising — unusual given the rest of the column. This module finds values that are *definitionally* wrong — impossible regardless of what the rest of the column looks like.
+The [anomaly module](Detectors-Anomaly) finds values that are *statistically* surprising, unusual given the rest of the column. This module finds values that are *definitionally* wrong, impossible regardless of what the rest of the column looks like.
 
 The difference is not academic:
 
@@ -32,8 +32,7 @@ A statistical check can only ever say "this is unusual." It cannot say "this is 
 
 ## Two kinds of rule
 
-### Bounds — per-column limits
-
+### Bounds: per-column limits
 ```python
 constraints={"bounds": {
     "spread":    {"min": 0, "min_exclusive": True},   # must be strictly > 0
@@ -53,17 +52,16 @@ Recognised keys per column:
 
 Both limits are optional; you may set either or both. Defaults are inclusive.
 
-The exclusive flags matter more than they look. A bid-ask spread of exactly 0 is not merely unusual — it means the bid equals the ask, which is a locked or crossed market and usually a feed glitch. `{"min": 0}` permits it; `{"min": 0, "min_exclusive": True}` catches it.
+The exclusive flags matter more than they look. A bid-ask spread of exactly 0 is not merely unusual, it means the bid equals the ask, which is a locked or crossed market and usually a feed glitch. `{"min": 0}` permits it; `{"min": 0, "min_exclusive": True}` catches it.
 
-### Relations — ordering between two columns
-
+### Relations: ordering between two columns
 ```python
 constraints={"relations": [("bid", "ask"), ("low", "high")]}
 ```
 
 Each tuple is `(low_column, high_column)` and asserts `low <= high` on every row where **both** values are present.
 
-This catches structural corruption that no per-column bound can see. A bid of 105 is perfectly valid. An ask of 104 is perfectly valid. A bid of 105 alongside an ask of 104 is a **crossed book** — an impossible market state, and a certain sign of a broken feed. Only a cross-column rule finds it, which is why VAL002 is CRITICAL while VAL001 is WARNING.
+This catches structural corruption that no per-column bound can see. A bid of 105 is perfectly valid. An ask of 104 is perfectly valid. A bid of 105 alongside an ask of 104 is a **crossed book**, an impossible market state, and a certain sign of a broken feed. Only a cross-column rule finds it, which is why VAL002 is CRITICAL while VAL001 is WARNING.
 
 ### The flat shorthand
 
@@ -119,7 +117,7 @@ NaN handling is consistent throughout: a missing value is never a violation. Onl
 
 ## Evidence
 
-**VAL001 — Out-of-range value.** WARNING.
+**VAL001, Out-of-range value.** WARNING.
 
 | Key | Meaning |
 | --- | ------- |
@@ -132,7 +130,7 @@ NaN handling is consistent throughout: a missing value is never a violation. Onl
 
 Read `observed_min` and `observed_max` carefully: they describe the *violating* values only, not the column as a whole. They are useful for diagnosis. Values of 1.8 and −2.4 against a [−1, 1] scale suggest a handful of glitches; values of 180 and −240 suggest someone forgot to divide by 100.
 
-**VAL002 — Relation violation.** CRITICAL.
+**VAL002, Relation violation.** CRITICAL.
 
 | Key | Meaning |
 | --- | ------- |
@@ -145,7 +143,7 @@ Read `observed_min` and `observed_max` carefully: they describe the *violating* 
 
 ## When it does not fire
 
-- You did not pass `constraints=` — the whole module is skipped
+- You did not pass `constraints=`, the whole module is skipped
 - A column's spec has neither `min` nor `max`
 - All values satisfy the rules
 - Violating rows contain NaN in the relevant column(s)
@@ -194,11 +192,11 @@ Column 'spread' has 1 value(s) outside its declared valid range (bounds min=0,
 max=None); observed [-1.0, -1.0]. These may be data-feed glitches or a scaling error.
 
 Ordering constraint 'bid <= ask' is violated on 1 row(s) (first at 2024-01-03
-00:00:00) — e.g. a crossed book where 'bid' exceeds 'ask'. Inspect these
+00:00:00), e.g. a crossed book where 'bid' exceeds 'ask'. Inspect these
 timestamps for feed glitches.
 ```
 
-Note that row 3 triggered **two** issues, from two different angles: the spread went negative (VAL001) and the book crossed (VAL002). They are the same underlying corruption seen through two rules. Redundant checks like this are a feature — either rule alone might have been the one you remembered to declare.
+Note that row 3 triggered **two** issues, from two different angles: the spread went negative (VAL001) and the book crossed (VAL002). They are the same underlying corruption seen through two rules. Redundant checks like this are a feature, either rule alone might have been the one you remembered to declare.
 
 ---
 
@@ -206,7 +204,7 @@ Note that row 3 triggered **two** issues, from two different angles: the spread 
 
 `report.leaky_columns()` returns only columns flagged by the **leakage** module. A VAL001 or VAL002 finding never appears there, even though VAL002 is CRITICAL.
 
-This is correct. A crossed book is a data error, not a modeling risk — the remedy is to fix or drop the affected rows, not to remove the feature from your model.
+This is correct. A crossed book is a data error, not a modeling risk, the remedy is to fix or drop the affected rows, not to remove the feature from your model.
 
 Note also that `apply_fixes()` does **not** repair validity issues. There is no automatic remedy: whether an off-scale sentiment score should be clipped to 1.0, set to NaN, or investigated as a scaling bug depends entirely on why it happened. `tsauditor` reports it and leaves the decision to you.
 
@@ -220,6 +218,6 @@ Note also that `apply_fixes()` does **not** repair validity issues. There is no 
 
 **Only `low <= high` relations are supported.** There is no way to express `a + b == c`, `a != b`, or any other cross-column rule.
 
-**Bounds are constant over time.** You cannot express a limit that changes across the series — for example, a price band that widens after a known regime change.
+**Bounds are constant over time.** You cannot express a limit that changes across the series, for example, a price band that widens after a known regime change.
 
 **One issue per column or per pair**, not per row. `n_violations` gives the count; recovering the actual row positions means rebuilding the mask yourself.

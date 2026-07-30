@@ -16,7 +16,7 @@ tsa.fix                   # scan and repair in one call -> (DataFrame, GuardRepo
 tsa.adapters.to_timesfm   # audit, repair, format       -> np.ndarray
 tsa.GuardReport           # the report type
 tsa.Issue                 # a single finding
-tsa.__version__           # "0.3.0"
+tsa.__version__           # "0.4.0"
 ```
 
 The detector functions are not re-exported at the top level. Import them from their modules when you want to run one in isolation:
@@ -63,7 +63,7 @@ tsauditor.scan(
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `df` | `pd.DataFrame` | required | Input data. Must have a `DatetimeIndex`, or pass `time_col`. A polars DataFrame is accepted **with** `time_col` (needs the `[polars]` extra). |
-| `target` | `str` or `None` | `None` | Target/label column. **Required for LEK001–LEK003, LEK005 and PNL002** — they are silently skipped without it. |
+| `target` | `str` or `None` | `None` | Target/label column. **Required for LEK001–LEK003, LEK005 and PNL002**: they are silently skipped without it. |
 | `time_col` | `str` or `None` | `None` | Datetime column to set as the index. |
 | `domain` | `str` or `None` | `None` | Threshold preset: `"finance"`, `"sensor"`, or `None`. See [Domain Presets](Domain-Presets). |
 | `available_at` | `dict` or `None` | `None` | Point-in-time availability for LEK004. Maps column → per-row publish timestamps (`pd.Series` on `df.index`) or a fixed `pd.Timedelta` lag. Only listed columns are checked. |
@@ -72,7 +72,7 @@ tsauditor.scan(
 | `run_profiler` | `bool` | `True` | Run structural checks (PRF). |
 | `run_anomaly` | `bool` | `True` | Run anomaly checks (ANO). |
 | `run_leakage` | `bool` | `True` | Run leakage checks (LEK). Target-based checks still need `target`; LEK004 runs whenever `available_at` is given. |
-| `run_stationarity` | `bool` | `True` | Run the ADF test (PRF003) — **the runtime hot spot**. Set `False` for a much faster sweep. |
+| `run_stationarity` | `bool` | `True` | Run the ADF test (PRF003): **the runtime hot spot**. Set `False` for a much faster sweep. |
 
 ### Returns
 
@@ -103,8 +103,7 @@ import tsauditor as tsa
 
 report = tsa.scan(df, target="Direction", domain="finance")
 
-# Faster sweep — skip the expensive ADF test
-report = tsa.scan(df, target="Direction", run_stationarity=False)
+# Faster sweep: skip the expensive ADF testreport = tsa.scan(df, target="Direction", run_stationarity=False)
 
 # As-of leakage: CPI is published ~30 days after its reference date
 report = tsa.scan(df, available_at={"cpi": pd.Timedelta(days=30)})
@@ -115,8 +114,7 @@ report = tsa.scan(df, constraints={
     "relations": [("bid", "ask")],
 })
 
-# polars input — time_col is mandatory
-report = tsa.scan(polars_df, time_col="date", target="Direction")
+# polars input: time_col is mandatoryreport = tsa.scan(polars_df, time_col="date", target="Direction")
 ```
 
 ---
@@ -131,6 +129,8 @@ clean_df, report = tsauditor.fix(
     target=None,
     time_col=None,
     domain=None,
+    available_at=None,
+    constraints=None,
     missing="interpolate",
     outliers="clip",
     stuck="nan",
@@ -139,15 +139,15 @@ clean_df, report = tsauditor.fix(
 )
 ```
 
-Equivalent to `scan()` then `report.apply_fixes()`. `df`, `target`, `time_col`, and `domain` pass through to `scan`; the rest pass through to `apply_fixes`.
+Equivalent to `scan()` then `report.apply_fixes()`. `df`, `target`, `time_col`, `domain`, `available_at`, and `constraints` pass through to `scan`; the rest pass through to `apply_fixes`.
 
 **The target label is never repaired.** Pass `target=` so it is protected.
 
-**Limitation:** `fix()` accepts neither `available_at` nor `constraints`, so LEK004 and the validity checks cannot run through this path. Call `scan()` and `apply_fixes()` separately if you need them.
+**`available_at`/`constraints` are opt-in, same as in `scan()`.** Without them, LEK004 and the validity checks (VAL001/VAL002) don't run, silently, exactly as they don't when calling `scan()` directly, see the note under [`tsauditor.scan()`](#tsauditorscan) above.
 
 ### Returns
 
-`(clean_df, report)` — a `tuple[pd.DataFrame, GuardReport]`.
+`(clean_df, report)`, a `tuple[pd.DataFrame, GuardReport]`.
 
 ```python
 clean, report = tsa.fix(df, target="Direction", domain="finance")
@@ -200,11 +200,11 @@ A 1-D `np.float32` array, or `(array, report)` when `return_report=True`.
 
 ### Three things to know
 
-**`target_col` is cleaned, not protected.** `fix()` normally shields the target from repair — you never clean a label. But here the series *is* what you want cleaned, so it is repaired as an ordinary column. Internally the adapter calls `fix(df, domain=domain)` with no `target=`.
+**`target_col` is cleaned, not protected.** `fix()` normally shields the target from repair, you never clean a label. But here the series *is* what you want cleaned, so it is repaired as an ordinary column. Internally the adapter calls `fix(df, domain=domain)` with no `target=`.
 
 **The result is verified finite.** Repair does not always eliminate every NaN (a lone unflagged missing value, for instance). Rather than letting a NaN reach the model and fail tokenization confusingly, the adapter raises.
 
-**`context_len` and `min_context` are your knobs, not TimesFM constants.** TimesFM 2.5 accepts contexts up to 16k and needs no frequency indicator. The default 1024 is deliberately conservative — raise it if you want more history.
+**`context_len` and `min_context` are your knobs, not TimesFM constants.** TimesFM 2.5 accepts contexts up to 16k and needs no frequency indicator. The default 1024 is deliberately conservative, raise it if you want more history.
 
 ```python
 array, report = tsa.adapters.to_timesfm(
@@ -253,7 +253,7 @@ from tsauditor import GuardReport
 
 ### Properties
 
-**`all_issues`** → `List[Issue]` — every issue, sorted by severity then module.
+**`all_issues`** → `List[Issue]`, every issue, sorted by severity then module.
 
 ### Methods
 
@@ -275,9 +275,9 @@ Valid `severity` values: `"critical"`, `"warning"`, `"info"`.
 
 Only meaningful after `scan(..., group_col=...)`. → [Panel Data](Panel-Data)
 
-**`is_panel`** (property) → `bool` — whether this report came from a panel scan.
+**`is_panel`** (property) → `bool`, whether this report came from a panel scan.
 
-**`groups()`** → `List[str]` — every entity scanned, sorted. Empty for single-series scans.
+**`groups()`** → `List[str]`, every entity scanned, sorted. Empty for single-series scans.
 
 **`groups_affected(code=None, column=None, severity=None)`** → `List[str]`
 
@@ -290,7 +290,7 @@ report.groups_affected(code="LEK001", column="ret")
 
 **`prevalence()`** → `List[Dict]`
 
-How widely each finding occurs across entities — the headline output of a panel scan. One row per `(code, column)`, sorted by severity then reach.
+How widely each finding occurs across entities, the headline output of a panel scan. One row per `(code, column)`, sorted by severity then reach.
 
 Keys: `code`, `module`, `severity`, `column`, `n_groups`, `total_groups`, `pct`, `n_issues`, `example_groups`.
 
@@ -299,13 +299,13 @@ import pandas as pd
 pd.DataFrame(report.prevalence())
 ```
 
-A finding at 100% is systemic — suspect the pipeline, not the entities.
+A finding at 100% is systemic, suspect the pipeline, not the entities.
 
 Works on single-series reports too, with `n_groups` and `total_groups` set to `None`.
 
 **`leaky_columns()`** → `List[str]`
 
-Sorted, deduplicated list of columns flagged by the **leakage** module. Validity issues never appear here, even though VAL002 is CRITICAL — a data error is not a leak.
+Sorted, deduplicated list of columns flagged by the **leakage** module. Validity issues never appear here, even though VAL002 is CRITICAL, a data error is not a leak.
 
 **`suggestions()`** → `List[Dict]`
 
@@ -316,7 +316,7 @@ One dict per issue with keys `code`, `column`, `severity`, `suggestion`, ordered
 Repaired **copy** of `df`, fixing only flagged columns. Never touches the target. Records `last_fixes`.
 
 - `missing`: `"interpolate"` / `"ffill"` / `"bfill"` / `None`
-- `outliers`: `"clip"` / `"nan"` / `"drop"` (alias for `"nan"`) / `None` — covers ANO002 **and** ANO003
+- `outliers`: `"clip"` / `"nan"` / `"drop"` (alias for `"nan"`) / `None`, covers ANO002 **and** ANO003
 - `stuck`: `"nan"` / `None`
 - `leakage`: `"drop"` / `None`
 
@@ -326,9 +326,9 @@ Repaired **copy** of `df`, fixing only flagged columns. Never touches the target
 
 Percentage of numeric cells not implicated by a quality issue (PRF002, PRF006, PRF007, ANO001, ANO002, ANO003). Leakage, stationarity, index problems, and validity are excluded.
 
-**Re-scans `df`**, so calling it on a `fix()` output gives a true "after" score. This costs a full scan — do not call it in a loop.
+**Re-scans `df`**, so calling it on a `fix()` output gives a true "after" score. This costs a full scan, do not call it in a loop.
 
-**`summary()`** → `None` — prints a rich CLI table plus suggested actions.
+**`summary()`** → `None`, prints a rich CLI table plus suggested actions.
 
 **`to_json(path, df=None, fixed_df=None)`** → `None`
 
@@ -338,7 +338,7 @@ JSON export. Passing `df` adds a `health` block; additionally passing `fixed_df`
 
 Formal, text-selectable PDF. Requires the `[pdf]` extra, else `ImportError`.
 
-**`to_dict()`** → `Dict[str, Any]` — metadata, issues, and counts. Note this returns only `critical` and `warnings` counts, not `info`.
+**`to_dict()`** → `Dict[str, Any]`, metadata, issues, and counts. Note this returns only `critical` and `warnings` counts, not `info`.
 
 ---
 
@@ -349,16 +349,16 @@ A single quality finding.
 | Attribute | Type | Description |
 | --------- | ---- | ----------- |
 | `module` | `str` | `"profiler"`, `"anomaly"`, `"leakage"`, or `"validity"` |
-| `code` | `str` | e.g. `"LEK001"` — see [Issue Code Reference](Issue-code-reference) |
+| `code` | `str` | e.g. `"LEK001"`: see [Issue Code Reference](Issue-code-reference) |
 | `severity` | `str` | `"critical"`, `"warning"`, `"info"` |
 | `description` | `str` | Human-readable explanation |
 | `column` | `str` or `None` | Affected column, or `None` for dataset-level findings |
-| `evidence` | `Dict[str, Any]` | Supporting statistics — **keys vary by code** |
-| `group` | `str` or `None` | Entity, for panel scans. `None` otherwise — and omitted entirely from `to_dict()` when `None`, so single-series JSON is unchanged. |
+| `evidence` | `Dict[str, Any]` | Supporting statistics: **keys vary by code** |
+| `group` | `str` or `None` | Entity, for panel scans. `None` otherwise: and omitted entirely from `to_dict()` when `None`, so single-series JSON is unchanged. |
 
-**`suggestion`** (property) → `str` — recommended action, derived from the code and filled from `evidence`.
+**`suggestion`** (property) → `str`, recommended action, derived from the code and filled from `evidence`.
 
-**`to_dict()`** → `Dict` — all attributes plus the rendered `suggestion`.
+**`to_dict()`** → `Dict`, all attributes plus the rendered `suggestion`.
 
 ```python
 issue = report.filter(code="LEK001")[0]
@@ -398,7 +398,7 @@ Each can be called directly on a DataFrame, bypassing `scan()`. All return `List
 | -------- | ----------- | -------------- |
 | `audit_frequency` | `tsauditor.profiler` | `domain` |
 | `audit_missing` | `tsauditor.profiler` | `cluster_threshold`, `missing_rate_threshold`, `domain` |
-| `audit_non_finite` | `tsauditor.profiler` | none — takes only the frame, [by design](Detectors-Profiler#why-there-is-no-threshold) |
+| `audit_non_finite` | `tsauditor.profiler` | none: takes only the frame, [by design](Detectors-Profiler#why-there-is-no-threshold) |
 | `audit_stationarity` | `tsauditor.profiler` | `alpha`, `min_obs`, `max_lag` |
 | `audit_point_anomalies` | `tsauditor.anomaly` | `zscore_threshold`, `domain` |
 | `audit_contextual_anomalies` | `tsauditor.anomaly` | `stuck_window`, `spike_threshold`, `spike_window`, `domain`, `handle_missing` |
@@ -411,7 +411,7 @@ Each can be called directly on a DataFrame, bypassing `scan()`. All return `List
 | `audit_panel_structure` | `tsauditor.panel` | `group_col`, `min_rows` |
 | `audit_cross_sectional_leakage` | `tsauditor.panel` | `group_col`, `target`, `max_lag`, `excess_threshold`, `min_entities` |
 
-Two things `scan()` does that direct calls do not: it validates and sorts your DataFrame, and it never forwards custom thresholds — only `domain`. If you call a detector directly on an unsorted or unvalidated frame, results are undefined.
+Two things `scan()` does that direct calls do not: it validates and sorts your DataFrame, and it never forwards custom thresholds, only `domain`. If you call a detector directly on an unsorted or unvalidated frame, results are undefined.
 
 Also note that `audit_validity` takes `bounds` and `relations` as separate arguments; the combined `constraints=` dict is a `scan()`-level convenience.
 

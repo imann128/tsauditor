@@ -93,6 +93,16 @@ def test_below_leakage_min_obs_reported():
     assert audit_non_finite(_col(v2))[0].evidence["below_leakage_min_obs"] is False
 
 
+def test_exactly_leakage_min_obs_is_not_below():
+    """The gate is `finite_remaining < _LEAKAGE_MIN_OBS` (30), so exactly 30
+    finite values remaining must read as NOT below the minimum."""
+    v = np.full(31, np.inf)
+    v[:30] = _clean(n=30)
+    ev = audit_non_finite(_col(v))[0].evidence
+    assert ev["n_finite_remaining"] == 30
+    assert ev["below_leakage_min_obs"] is False
+
+
 def test_multiple_columns_all_reported():
     n = 100
     a, b, c = _clean(n), _clean(n, 1), _clean(n, 2)

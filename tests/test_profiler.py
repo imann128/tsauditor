@@ -89,6 +89,51 @@ def test_clustered_gaps_run_length(clean_financial_df):
     assert issue.evidence["max_consecutive_gaps"] >= 3
 
 
+def test_exactly_two_repeat_counts_still_looks_like_panel():
+    """
+    The panel-shape guard is `counts.nunique() <= 2`, allowing entities to
+    differ by at most one row (e.g. a ragged panel where one entity has one
+    fewer observation). Exactly 2 distinct repeat counts must still count as
+    panel-shaped, not be dismissed as a duplication bug.
+    """
+    idx = pd.to_datetime(
+        ["2024-01-01", "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+    )
+    df = pd.DataFrame({"value": range(5)}, index=idx)
+    issues = audit_frequency(df, domain="finance")
+    dup = next(i for i in issues if i.code == "PRF004")
+    assert dup.evidence["looks_like_panel"] is True
+
+
+def test_exactly_two_consecutive_gaps_forms_a_cluster():
+    """
+    The cluster guard is `run_lengths >= 2`, so exactly two consecutive large
+    gaps must be reported as a cluster (PRF005), not just two isolated PRF001
+    gaps.
+    """
+    base = pd.date_range("2023-01-01", periods=10, freq="D")
+    idx = base.append(
+        pd.DatetimeIndex(
+            [base[-1] + pd.Timedelta(days=10), base[-1] + pd.Timedelta(days=20)]
+        )
+    )
+    df = pd.DataFrame({"value": range(len(idx))}, index=idx)
+    issues = audit_frequency(df, domain="finance")
+    cluster_issues = [i for i in issues if i.code == "PRF005"]
+    assert len(cluster_issues) == 1
+    assert cluster_issues[0].evidence["max_consecutive_gaps"] == 2
+
+
+def test_finance_gap_exactly_five_days_flags():
+    """The finance threshold is `gap_days >= 5.0`; a gap of exactly 5 days
+    must still flag, not be waved through as just under the limit."""
+    base = pd.date_range("2023-01-01", periods=10, freq="D")
+    idx = base.append(pd.DatetimeIndex([base[-1] + pd.Timedelta(days=5)]))
+    df = pd.DataFrame({"value": range(len(idx))}, index=idx)
+    issues = audit_frequency(df, domain="finance")
+    assert any(i.code == "PRF001" for i in issues)
+
+
 def test_single_row_df():
     # Case 5 — Single row df -> no issue
     dates = pd.date_range("2026-05-22", periods=1, freq="B")
@@ -105,6 +150,32 @@ def test_non_datetime_index_raises_value_error():
 
     with pytest.raises(ValueError, match="DataFrame index must be a pd.DatetimeIndex"):
         audit_frequency(df_bad_index, domain="finance")
+
+
+def test_non_finance_gap_multiplier_is_pinned_at_3x_median():
+    """
+    Pins the non-finance gap threshold at exactly 3x the median gap.
+
+    test_sensor_domain_median_threshold only checks that a gap far above the
+    threshold (23h against a ~0.125-day/3h threshold) gets flagged - a
+    multiplier mutated to 5.0 or even 10.0 would still pass that test. This
+    test builds a gap on each side of the 3x boundary (3.5x flags, 2.5x does
+    not) so a multiplier mutated in either direction is caught.
+    """
+    base = pd.date_range("2023-01-01", periods=20, freq="h")  # 19 gaps of 1h
+    # median gap stays 1h (0.041667 days) throughout, unaffected by one outlier
+
+    # 3.5x median -> above a correct 3x threshold, still below a 4x threshold.
+    idx_above = base.append(pd.DatetimeIndex([base[-1] + pd.Timedelta(hours=3.5)]))
+    df_above = pd.DataFrame({"value": range(len(idx_above))}, index=idx_above)
+    issues_above = audit_frequency(df_above, domain=None)
+    assert any(i.code == "PRF001" for i in issues_above)
+
+    # 2.5x median -> below a correct 3x threshold, above a 2x threshold.
+    idx_below = base.append(pd.DatetimeIndex([base[-1] + pd.Timedelta(hours=2.5)]))
+    df_below = pd.DataFrame({"value": range(len(idx_below))}, index=idx_below)
+    issues_below = audit_frequency(df_below, domain=None)
+    assert not any(i.code == "PRF001" for i in issues_below)
 
 
 def test_sensor_domain_median_threshold(sensor_df):

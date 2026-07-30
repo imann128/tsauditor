@@ -107,6 +107,17 @@ def test_few_observations_skipped():
     assert audit_equivalence(df, target="target", min_obs=30) == []
 
 
+def test_exactly_min_obs_is_scored_not_skipped():
+    """The min_obs gate is `< min_obs`, so exactly min_obs observations must
+    still be scored, not skipped. (Distinct from test_few_observations_skipped,
+    which is below the boundary.)"""
+    n = 30
+    t = np.arange(n, dtype=float)
+    df = pd.DataFrame({"target": t, "leak": t}, index=_idx(n))
+    issues = audit_equivalence(df, target="target", min_obs=30)
+    assert "leak" in {i.column for i in issues}
+
+
 def test_constant_feature_skipped():
     n = 100
     t = np.random.default_rng(5).normal(0, 1, n)

@@ -9,6 +9,8 @@ correlation  Cross-correlation across lags to detect future information in featu
 equivalence  Target equivalence detection (feature mathematically identical to target).
 temporal     Rolling window lookahead detection.
 asof         Point-in-time availability leakage (values used before release).
+combination  Group-of-features leakage (no single feature leaks, but a small
+             combination reconstructs the target).
 
 Issue codes raised
 ------------------
@@ -21,16 +23,20 @@ LEK003  Rolling window lookahead: suspected forward-looking window in feature
 LEK004  As-of leakage: a value is used before it was available (its release
         timestamp is later than the row it occupies). Opt-in; needs availability
         metadata.
+LEK005  Combination leakage: a small group of features jointly reconstructs the
+        target even though no individual feature does.
 """
 
 from tsauditor.leakage.correlation import audit_correlation_leakage
 from tsauditor.leakage.equivalence import audit_equivalence
 from tsauditor.leakage.temporal import audit_temporal_leakage
 from tsauditor.leakage.asof import audit_asof_leakage
+from tsauditor.leakage.combination import audit_combination_leakage
 
 __all__ = [
     "audit_correlation_leakage",
     "audit_equivalence",
     "audit_temporal_leakage",
     "audit_asof_leakage",
+    "audit_combination_leakage",
 ]

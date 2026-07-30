@@ -1,6 +1,6 @@
 # Contributing
 
-**The canonical guide is [`CONTRIBUTING.md`](https://github.com/imann128/tsauditor/blob/main/CONTRIBUTING.md) in the repository.** Read that first — it covers the branch workflow, PR description requirements, and how to report bugs.
+**The canonical guide is [`CONTRIBUTING.md`](https://github.com/imann128/tsauditor/blob/main/CONTRIBUTING.md) in the repository.** Read that first, it covers the branch workflow, PR description requirements, and how to report bugs.
 
 This page adds what that file does not cover: what a new *detector* needs, and how to keep this wiki accurate.
 
@@ -22,7 +22,7 @@ ruff format --check .
 
 Branch prefixes: `fix/`, `feat/`, `docs/`, `test/`.
 
-CI runs the suite across **Python 3.9–3.14 on Linux, Windows, and macOS** — 18 combinations — plus lint and format checks. `main` is branch-protected; every check must be green before merge.
+CI runs the suite across **Python 3.9–3.14 on Linux, Windows, and macOS**, 18 combinations, plus lint and format checks. `main` is branch-protected; every check must be green before merge.
 
 ---
 
@@ -30,7 +30,7 @@ CI runs the suite across **Python 3.9–3.14 on Linux, Windows, and macOS** — 
 
 All code, comments, docstrings, variable names, commit messages, and PR descriptions must be in English. Docstrings are rendered to users, and the project has contributors and users across several countries.
 
-If English is not your first language, that is completely fine — write plainly and do not worry about polish. Clear, simple English is better than elaborate English. A reviewer will help with wording.
+If English is not your first language, that is completely fine, write plainly and do not worry about polish. Clear, simple English is better than elaborate English. A reviewer will help with wording.
 
 ---
 
@@ -40,7 +40,7 @@ The `leakage/` module is the project's core contribution and is held to a higher
 
 **1. Signature.** `(df, ..., domain=None) -> List[Issue]`, in the module matching its prefix.
 
-**2. Fail softly on bad columns.** Skip degenerate input — constant columns, too few observations, all-NaN — by `continue`, not by raising. One odd column must never abort someone's entire scan. Raise only for caller mistakes: a missing target, a non-numeric declared column.
+**2. Fail softly on bad columns.** Skip degenerate input, constant columns, too few observations, all-NaN, by `continue`, not by raising. One odd column must never abort someone's entire scan. Raise only for caller mistakes: a missing target, a non-numeric declared column.
 
 **3. Populate `evidence` properly.** This is the requirement that matters most.
 
@@ -69,7 +69,7 @@ A detector that reports a verdict without its reasoning cannot be trusted, debug
 
 Templates may reference `{target}` (rendered as `"column 'X'"` or `"the dataset"`) and any key in your evidence dict.
 
-**5. Wire it into `scanner.py`** behind the appropriate `run_*` flag. If your check needs metadata the user must supply — like `available_at` or `constraints` — make it opt-in and default to off. **Never guess.**
+**5. Wire it into `scanner.py`** behind the appropriate `run_*` flag. If your check needs metadata the user must supply, like `available_at` or `constraints`, make it opt-in and default to off. **Never guess.**
 
 **6. Justify your thresholds.** Every threshold in this library has a documented reason: fat tails for `finance`, weekend closures for the 5-day gap, the √(2/π) ceiling for using AUC. A number with no rationale will be questioned in review.
 
@@ -81,7 +81,7 @@ Templates may reference `{target}` (rendered as `"column 'X'"` or `"the dataset"
 
 ## Contributing to this wiki
 
-The wiki lives in `wiki/` in the main repository and is copied to GitHub Wiki. Edit the files in `wiki/` and open a PR — do not edit the GitHub Wiki directly, or your change will be overwritten.
+The wiki lives in `wiki/` in the main repository and is copied to GitHub Wiki. Edit the files in `wiki/` and open a PR, do not edit the GitHub Wiki directly, or your change will be overwritten.
 
 ### Every example must be executed
 
@@ -91,13 +91,13 @@ This is not pedantry. Documentation examples get copied into real projects. An e
 
 ### Every detector page follows the same template
 
-1. What it detects — one plain sentence
-2. Signature — every parameter, type, default, and effect
-3. How it works — the algorithm, and why *this* method rather than the obvious alternative
-4. Issue codes and evidence — every evidence key documented
-5. When it does not fire — the skip conditions
-6. Worked example — runnable, with real output
-7. **Limitations and false positives** — mandatory
+1. What it detects, one plain sentence
+2. Signature, every parameter, type, default, and effect
+3. How it works, the algorithm, and why *this* method rather than the obvious alternative
+4. Issue codes and evidence, every evidence key documented
+5. When it does not fire, the skip conditions
+6. Worked example, runnable, with real output
+7. **Limitations and false positives**, mandatory
 
 Section 7 is not optional. Users need to know when a check is wrong, and a tool that hides its failure modes is worse than no tool. If you cannot think of a limitation, you have not thought hard enough about your check.
 
@@ -121,14 +121,14 @@ Three categories that do not require understanding the full leakage-detection de
 
 **Edge-case tests**
 
-- Multi-column cases — most detectors are only tested with a *single* problem column ([see below](#a-known-gap-worth-filling))
+- Multi-column cases, most detectors are only tested with a *single* problem column ([see below](#a-known-gap-worth-filling))
 - Boundary conditions not currently covered
 
 **New domain presets**
 
-- `domain="crypto"` — 24/7 trading with no weekend gaps, historically high volatility
-- `domain="iot"` — sub-second frequencies, variable sensor reliability
-- `domain="healthcare"` — irregular sampling, clinically meaningful anomaly thresholds
+- `domain="crypto"`, 24/7 trading with no weekend gaps, historically high volatility
+- `domain="iot"`, sub-second frequencies, variable sensor reliability
+- `domain="healthcare"`, irregular sampling, clinically meaningful anomaly thresholds
 
 See [Domain Presets](Domain-Presets#proposing-a-new-domain-preset) for what a preset proposal needs.
 
@@ -136,8 +136,8 @@ See [Domain Presets](Domain-Presets#proposing-a-new-domain-preset) for what a pr
 
 ## Reporting bugs and proposing features
 
-- **Bugs** — use the [Bug Report](https://github.com/imann128/tsauditor/issues/new?template=bug_report.md) template. Include your Python version, OS, `tsauditor` version, and a minimal reproduction. Synthetic data that triggers the issue is fine.
-- **Features** — use the [Feature Request](https://github.com/imann128/tsauditor/issues/new?template=feature_request.md) template. Anything touching the `leakage/` module needs statistical reasoning for the approach; that module is the project's core contribution and is held to a higher bar.
+- **Bugs**, use the [Bug Report](https://github.com/imann128/tsauditor/issues/new?template=bug_report.md) template. Include your Python version, OS, `tsauditor` version, and a minimal reproduction. Synthetic data that triggers the issue is fine.
+- **Features**, use the [Feature Request](https://github.com/imann128/tsauditor/issues/new?template=feature_request.md) template. Anything touching the `leakage/` module needs statistical reasoning for the approach; that module is the project's core contribution and is held to a higher bar.
 - **Unsure which it is?** Open a [GitHub Discussion](https://github.com/imann128/tsauditor/discussions).
 
 ---
@@ -148,7 +148,7 @@ Most detectors are tested with exactly **one** problem column, so a bug where a 
 
 **This is tracked in [#44](https://github.com/imann128/tsauditor/issues/44).** Comment there before starting so the work is not duplicated.
 
-Verified by deliberately breaking each detector to report only its first result — all existing tests still passed:
+Verified by deliberately breaking each detector to report only its first result, all existing tests still passed:
 
 | file | tests | multi-column coverage |
 | ---- | ----- | --------------------- |
@@ -161,21 +161,17 @@ Verified by deliberately breaking each detector to report only its first result 
 
 One test per file: put two or three problem columns in the frame, assert every one is reported.
 
-**Check your own test is worth having.** Break the code on purpose — add `and not issues` to the flagging condition — confirm your test fails, then undo it. If it still passes with the code broken, it is not testing what you think.
+**Check your own test is worth having.** Break the code on purpose, add `and not issues` to the flagging condition, confirm your test fails, then undo it. If it still passes with the code broken, it is not testing what you think.
 
 ---
 
 ## Good first contributions
 
-**Documentation** — if something on this wiki is unclear or wrong, fix it. You do not need permission.
+**Documentation**, if something on this wiki is unclear or wrong, fix it. You do not need permission.
 
-**Test coverage for negative cases** — pick a detector and add a test proving it stays quiet on clean data.
+**Test coverage for negative cases**, pick a detector and add a test proving it stays quiet on clean data.
 
-**Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
-
-**Deduplicate `to_dict()` and `to_json()`** — both build nearly identical payloads from their own literal dicts in `report/summary.py`, and have already drifted twice. Deriving one from the other makes disagreement impossible.
-
-See [Internals — Known rough edges](Internals#known-rough-edges) for more.
+See [Internals, Known rough edges](Internals#known-rough-edges) for more.
 
 ### The threshold convention
 
@@ -187,7 +183,7 @@ def audit_something(df, threshold: float = None, domain: str = None):
         threshold = {"finance": 5.0, "sensor": 3.5}.get(domain, 4.0)
 ```
 
-Use `is None`, never `threshold or default` — the `or` idiom treats a deliberate `0` as "unset". `tests/test_threshold_resolution.py` pins this across all three detectors that take both.
+Use `is None`, never `threshold or default`, the `or` idiom treats a deliberate `0` as "unset". `tests/test_threshold_resolution.py` pins this across all three detectors that take both.
 
 ---
 
@@ -203,4 +199,4 @@ Use `is None`, never `threshold or default` — the `or` idiom treats a delibera
 
 **Non-English identifiers or commit messages.** See above.
 
-**New hardcoded thresholds without a domain-aware default** — this is on the PR checklist.
+**New hardcoded thresholds without a domain-aware default**, this is on the PR checklist.

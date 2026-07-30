@@ -151,6 +151,39 @@ categories:
   column). You don't need to write any other code; this one line is the
   whole change.
 
+## Boundary and mutation testing
+
+Every gate in this codebase (`if x < min_obs`, `if count >= threshold`, and
+similar) is exactly the kind of line that breaks silently: flip `<` to `<=`
+and every existing test can keep passing while the behavior at the boundary
+changes. `tsauditor` has been swept for this — deliberately mutate each gate
+by one step and confirm some test fails — across `anomaly/`, `validity/`,
+`leakage/`, `profiler/`, and `panel.py`. If you add a new gate, add a test
+that pins its exact boundary (not just a value comfortably on one side of
+it), and ideally verify it the same way: temporarily flip the operator or
+off-by-one the constant, confirm your new test fails, then put the code back.
+
+This only applies to **integer-count gates** (`min_obs`, `min_rows`,
+`min_entities`, run-length thresholds, and the like) — these are exactly
+constructible with real data, so an exact-boundary test is meaningful and
+cheap to write.
+
+**Float-threshold gates are handled differently, on purpose.** Checks like
+LEK001's `spearman_rho >= 0.95` or `combination.py`'s `score >= 0.30` compare
+a *computed statistic* (a correlation, an AUC, an adjusted R², a p-value)
+against a threshold. Real data essentially never lands on the boundary
+exactly — `0.95` versus `0.9500000001` isn't something a Spearman correlation
+computed from actual numbers will hit by chance, so an exact-equality test
+would have to fabricate the statistic (e.g. monkeypatch the scoring function
+to return a rigged value) rather than exercise the real computation. That
+tests the test harness, not the detector, so these were left as-is rather
+than padded with tests. What each of the existing tests does instead — and
+what a new float-threshold test should do — is bracket the threshold with
+two *realistic* cases, one clearly above and one clearly below (see
+`test_continuous_threshold_boundary_is_pinned` in `test_equivalence.py` for
+the pattern), which catches a threshold moved to the wrong value without
+needing to hit it exactly.
+
 ## Questions
 
 Open a [discussion](https://github.com/imann128/tsauditor/discussions) or a

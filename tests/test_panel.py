@@ -17,7 +17,11 @@ import pytest
 
 import tsauditor as tsa
 from tsauditor.anomaly.point import audit_point_anomalies
-from tsauditor.panel import audit_cross_sectional_leakage, audit_panel_structure
+from tsauditor.panel import (
+    _cross_sectional_corr,
+    audit_cross_sectional_leakage,
+    audit_panel_structure,
+)
 
 DATES = pd.date_range("2024-01-01", periods=200, freq="B")
 TICKERS = ["AAA", "BBB", "CCC", "DDD", "EEE"]
@@ -304,6 +308,19 @@ def test_short_entity_raises_pnl003():
     assert pnl003[0].evidence["shortest_groups"] == [{"group": "SHORT", "rows": 20}]
 
 
+def test_exactly_min_rows_is_not_short():
+    """The gate is `len(idx) < min_rows`, so an entity with exactly min_rows
+    rows must not be reported as too short. test_short_entity_raises_pnl003
+    uses 20 rows against the default 30, which is well below the boundary and
+    would not catch an off-by-one here."""
+    parts = [_entity("AAA", 200), _entity("BBB", 200), _entity("EXACT", 30)]
+    df = pd.concat(parts).sort_index()
+
+    issues = audit_panel_structure(df, group_col="ticker", min_rows=30)
+    pnl003 = [i for i in issues if i.code == "PNL003"]
+    assert pnl003 == []
+
+
 def test_single_entity_is_not_a_panel():
     """One entity is just a time series — nothing panel-specific to report."""
     df = _entity("AAA", 200)
@@ -574,6 +591,111 @@ def test_pnl002_evidence_is_complete():
         assert key in issue.evidence, key
     assert issue.evidence["metric"] == "cross_sectional_spearman"
     assert issue.evidence["excess"] >= issue.evidence["excess_threshold"]
+
+
+def test_exactly_min_entities_is_scored_not_skipped():
+    """
+    The gate is `target_wide.shape[1] < min_entities`, so a panel with exactly
+    min_entities entities must still be scored. test_pnl002_skips_panels_with_
+    too_few_entities uses 5 entities against the default 20 -- nowhere near
+    the boundary, so it would not catch an off-by-one here.
+    """
+    panel_19 = _factor_panel(25, n_entities=19, n_periods=400)
+    panel_20 = _factor_panel(25, n_entities=20, n_periods=400)
+
+    below = audit_cross_sectional_leakage(
+        panel_19, group_col="ticker", target="target", min_entities=20
+    )
+    at = audit_cross_sectional_leakage(
+        panel_20, group_col="ticker", target="target", min_entities=20
+    )
+    assert below == []
+    assert [i.column for i in at] == ["leak"]
+
+
+def test_exactly_min_timestamps_is_scored_not_skipped():
+    """
+    The gate is `len(target_wide) < min_timestamps`. `_factor_panel` drops one
+    trailing row per entity (the `leak` shift(-1) is NaN there), so
+    n_periods=31 is the input that lands exactly on a 30-timestamp panel.
+    test_pnl002_skips_panels_with_too_few_timestamps uses n_periods=20, well
+    below the boundary.
+    """
+    below = audit_cross_sectional_leakage(
+        _factor_panel(25, n_entities=20, n_periods=30),
+        group_col="ticker",
+        target="target",
+        min_timestamps=30,
+    )
+    at = audit_cross_sectional_leakage(
+        _factor_panel(25, n_entities=20, n_periods=31),
+        group_col="ticker",
+        target="target",
+        min_timestamps=30,
+    )
+    assert below == []
+    assert [i.column for i in at] == ["leak"]
+
+
+def test_cross_sectional_corr_usable_rows_boundary():
+    """
+    `_cross_sectional_corr`'s gate is `usable_rows.sum() < 2`: at least two
+    timestamps with enough co-present entities are needed to average over.
+    Built directly against the private helper since constructing an exact
+    count of usable *timestamps* (as opposed to entities) through the full
+    pivot pipeline is fragile.
+    """
+    dates = pd.date_range("2024-01-01", periods=3, freq="D")
+    cols = ["e1", "e2", "e3"]
+
+    target = pd.DataFrame(
+        [[1.0, 2.0, 3.0], [3.0, 1.0, 2.0], [5.0, np.nan, 5.5]],
+        index=dates,
+        columns=cols,
+    )
+    feature = pd.DataFrame(
+        [[2.0, 1.0, 3.0], [1.0, 3.0, 2.0], [7.0, np.nan, 6.5]],
+        index=dates,
+        columns=cols,
+    )
+    # Two timestamps have all 3 entities present -> exactly 2 usable rows.
+    assert _cross_sectional_corr(feature, target, lag=0, min_entities=3) is not None
+
+    # Knock one of those two down to 2 co-present entities -> only 1 usable row.
+    target.iloc[1, 1] = np.nan
+    feature.iloc[1, 1] = np.nan
+    assert _cross_sectional_corr(feature, target, lag=0, min_entities=3) is None
+
+
+def test_cross_sectional_corr_finite_rho_boundary():
+    """
+    `_cross_sectional_corr`'s second gate is `len(rho) < 2`: after the
+    per-timestamp correlations are computed, at least two finite ones are
+    needed to average. A timestamp where every entity has the same value
+    produces a zero-variance row (undefined correlation, NaN), which is
+    exactly how a usable-row count can still fail this second gate.
+    """
+    dates = pd.date_range("2024-01-01", periods=3, freq="D")
+    cols = ["e1", "e2", "e3"]
+
+    target = pd.DataFrame(
+        [[1.0, 2.0, 3.0], [3.0, 1.0, 2.0], [5.0, 5.0, 5.0]],  # last row constant
+        index=dates,
+        columns=cols,
+    )
+    feature = pd.DataFrame(
+        [[2.0, 1.0, 3.0], [1.0, 3.0, 2.0], [7.0, 7.0, 7.0]],  # last row constant
+        index=dates,
+        columns=cols,
+    )
+    # Rows 0 and 1 produce finite correlations; row 2 is constant -> NaN.
+    # Exactly 2 finite values -> must still average, not bail out.
+    assert _cross_sectional_corr(feature, target, lag=0, min_entities=3) is not None
+
+    # Make row 1 constant too -> only 1 finite correlation remains.
+    target.iloc[1] = 9.0
+    feature.iloc[1] = 9.0
+    assert _cross_sectional_corr(feature, target, lag=0, min_entities=3) is None
 
 
 def test_pnl002_skips_panels_with_too_few_entities():

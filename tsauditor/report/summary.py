@@ -467,17 +467,18 @@ class GuardReport:
         fixed_df : optional
             If given (e.g. the ``apply_fixes`` output), include the post-fix
             health score and the before/after delta.
+
+        Note
+        ----
+        Built from ``to_dict()`` rather than assembling ``metadata``/``issues``/
+        ``counts`` again here. These two used to be independent literal dicts
+        and had already drifted twice, most recently ``to_dict()`` silently
+        omitting the ``info`` count that this method includes (#43). A field
+        added to one and not the other is exactly the bug class this guards
+        against; extend ``to_dict()`` and both callers pick it up.
         """
-        payload = {
-            "metadata": self.metadata,
-            "issues": [i.to_dict() for i in self.all_issues],
-            "counts": {
-                "critical": len(self.critical),
-                "warnings": len(self.warnings),
-                "info": len(self.info),
-            },
-            "leaky_columns": self.leaky_columns(),
-        }
+        payload = self.to_dict()
+        payload["leaky_columns"] = self.leaky_columns()
         if self.is_panel:
             payload["panel"] = {
                 "group_col": self.metadata.get("group_col"),

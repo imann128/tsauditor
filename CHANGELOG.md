@@ -4,7 +4,51 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-30
+
+### Fixed — `audit_combination_leakage` was unreachable from `tsauditor.leakage`
+
+- **LEK005 was importable only via `tsauditor.leakage.combination`, not
+  `tsauditor.leakage`** — every other detector in the package (equivalence,
+  correlation, temporal, asof) is reachable both ways. A user following the
+  pattern documented on the wiki's API Reference page,
+  `from tsauditor.leakage import audit_...`, would hit an `ImportError`
+  specifically for combination leakage. `tsauditor/leakage/__init__.py` now
+  re-exports it and lists LEK005 alongside the other codes in its module
+  docstring. Caught while cross-checking the wiki against the actual public
+  surface.
+
+### Fixed — `to_dict()` undercounted issues
+
+- **`GuardReport.to_dict()` omitted the `info` count**, so its `counts` total
+  didn't match `to_json()`'s for the same report — a caller reading counts
+  from `to_dict()` alone would see fewer issues than actually exist.
+  ([#43](https://github.com/imann128/tsauditor/issues/43), fixed in
+  [#51](https://github.com/imann128/tsauditor/pull/51) by
+  [@LuisMend12](https://github.com/LuisMend12))
+
+- **`to_dict()` and `to_json()` no longer maintain two independent copies of
+  the same payload.** ([#47](https://github.com/imann128/tsauditor/issues/47))
+  The fix above patched the symptom, not the cause: `to_json()` built its
+  `metadata`/`issues`/`counts` block as its own literal dict, separate from
+  `to_dict()`'s, which is exactly how the `info`-count omission happened in
+  the first place and could happen again the next time either one gains a
+  field. `to_json()` now builds its payload from `to_dict()` and only adds
+  the JSON-specific extras (`leaky_columns`, `panel`, `health`) on top, so
+  the two structurally cannot drift apart again.
+
+### Added — `fix()` accepts `available_at` and `constraints`
+
+- **`tsa.fix()` can now run LEK004 (as-of leakage) and VAL001/VAL002
+  (validity) as part of a one-shot repair.**
+  ([#42](https://github.com/imann128/tsauditor/issues/42))
+  Both checks are opt-in on `scan()` because tsauditor cannot infer a
+  release schedule or a validity bound on its own, but `fix()` had no
+  parameter to pass either through, so the only way to exercise them
+  together with a one-shot repair was to call `scan()` and `apply_fixes()`
+  separately. `fix()` silently skipped them with no error, which reads as
+  "nothing wrong" rather than "not checked." `fix(df, available_at=...,
+  constraints=...)` now forwards both to the underlying `scan()` call.
 
 ### Added — PNL004 reports rows with a null entity id
 

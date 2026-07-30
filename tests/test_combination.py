@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 
 import tsauditor as tsa
-from tsauditor.leakage.combination import audit_combination_leakage
+from tsauditor.leakage.combination import _adjusted_r2, audit_combination_leakage
 
 N = 400
 IDX = pd.date_range("2024-01-01", periods=N, freq="D")
@@ -239,6 +239,47 @@ def test_too_few_rows_returns_nothing():
     df = pd.DataFrame({"target": x1 - x2, "x1": x1, "x2": x2}, index=idx)
 
     assert audit_combination_leakage(df, target="target", min_obs=30) == []
+
+
+def test_exactly_min_obs_rows_is_scored_not_skipped():
+    """The gate is `< min_obs`, so exactly min_obs rows must still be scored."""
+    rng = np.random.default_rng(7)
+    n = 30
+    idx = pd.date_range("2024-01-01", periods=n, freq="D")
+    x1 = rng.normal(0, 1, n)
+    x2 = rng.normal(0, 1, n)
+    df = pd.DataFrame({"target": x1 - x2, "x1": x1, "x2": x2}, index=idx)
+
+    issues = audit_combination_leakage(df, target="target", min_obs=30)
+    assert _groups(issues) == {("x1", "x2")}
+
+
+def test_two_valued_column_is_not_treated_as_constant():
+    """The constant-column guard is `nunique < 2`; a column with exactly two
+    distinct values is not constant and must still be usable in a group."""
+    rng = np.random.default_rng(9)
+    x1 = np.where(rng.normal(0, 1, N) > 0, 1.0, -1.0)  # exactly two values
+    x2 = rng.normal(0, 1, N)
+    df = pd.DataFrame({"target": x1 - x2, "x1": x1, "x2": x2}, index=IDX)
+
+    issues = audit_combination_leakage(df, target="target")
+    assert _groups(issues) == {("x1", "x2")}
+
+
+def test_adjusted_r2_degenerate_guard_boundary():
+    """
+    _adjusted_r2 returns 0.0 (rather than computing, and dividing by zero) when
+    there are not enough rows to estimate the model: n <= p + 1. p=1 predictor
+    here, so n=2 is degenerate and must return exactly 0.0, while n=3 has one
+    residual degree of freedom and must compute a real value.
+    """
+    y2 = np.array([1.0, 2.0])
+    X2 = np.array([[1.0], [2.0]])
+    assert _adjusted_r2(y2, X2) == 0.0
+
+    y3 = np.array([1.0, 2.0, 3.0])
+    X3 = np.array([[1.0], [2.0], [3.5]])
+    assert _adjusted_r2(y3, X3) != 0.0
 
 
 def test_max_reported_caps_output():

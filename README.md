@@ -2,12 +2,12 @@
 [![CI](https://github.com/imann128/tsauditor/actions/workflows/ci.yml/badge.svg)](https://github.com/imann128/tsauditor/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/imann128/tsauditor/graph/badge.svg)](https://codecov.io/github/imann128/tsauditor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)
 
 A data-quality auditing library for **time-series tabular data**, with a focus on
 financial and sensor domains. `tsauditor` scans a `DataFrame` and returns a
-structured report of structural problems, anomalies, and — its core contribution —
-**data-leakage** between features and the prediction target. It can also *repair*
+structured report of structural problems, anomalies, and **data-leakage** between
+features and the prediction target, its core contribution. It can also *repair*
 the flagged issues on a copy, score data health, export a formal report, and hand
 a clean array straight to a forecasting model.
 
@@ -15,8 +15,8 @@ The project grew out of a real bug in a Pakistani equity (OGDC) direction-predic
 model: a same-day percentage-change feature (`ChangeP`) was mathematically near-identical
 to the target it was meant to predict. With `ChangeP` included, a Random Forest
 classifier reached 99.68% accuracy (AUC 0.9987); a Gradient Boosting classifier reached
-the same 99.68% accuracy (AUC 0.9967). Removing it — along with same-day `Open`, `High`,
-and `Low`, which are equally unavailable at prediction time — dropped accuracy to 69.81%
+the same 99.68% accuracy (AUC 0.9967). Removing it, along with same-day `Open`, `High`,
+and `Low`, which are equally unavailable at prediction time, dropped accuracy to 69.81%
 (RF, AUC 0.7795) and 73.70% (GBM, AUC 0.8072) on a held-out test period
 (2025-01-09 to 2026-04-03). Both models still beat a 50% baseline, but the headline
 accuracy had been almost entirely an artifact of the leak. `tsauditor` exists to catch
@@ -26,11 +26,11 @@ script, and measured results.
 
 ## Not just price and direction
 
-`tsauditor` is **column-agnostic** — it never hard-codes `price`, `Direction`, or any
+`tsauditor` is **column-agnostic**, it never hard-codes `price`, `Direction`, or any
 other column. `price`/`Direction` are simply the columns in the OGDC example above. The
 structural (PRF), anomaly (ANO), and target-relative leakage (LEK001–003) checks apply to
-*any* numeric time-series column. Version 0.2.0 added two **declarative** mechanisms —
-`available_at=` (point-in-time release correctness) and `constraints=` (domain validity) —
+*any* numeric time-series column. Version 0.2.0 added two **declarative** mechanisms:
+`available_at=` (point-in-time release correctness) and `constraints=` (domain validity),
 so you can also audit macro, sentiment, order-book, volatility, and other alternative-data
 columns correctly. tsauditor never *computes* these features; you point it at your columns
 and, where relevant, declare their semantics.
@@ -77,7 +77,10 @@ cd tsauditor
 pip install -e ".[dev]"
 ```
 
-## **Note:** Set domain="None" for domain agnostic usage. Similarly, it works well without defining a domain at all.
+**Note:** For domain-agnostic usage, either omit `domain=` entirely or pass `domain=None`
+(Python's `None`, not the string `"None"` — passing the string raises `ValueError`, since
+only `"finance"`, `"sensor"`, and `None` are accepted). Omitting it is equivalent; `None`
+is already the default.
 
 **For usage snippets, scroll down in the readme or check out the [examples](./examples) directory for sample scripts and notebooks.**
 
@@ -101,6 +104,12 @@ print(report.last_fixes)         # exactly what changed
 
 `scan()` returns a `GuardReport` holding `Issue` dataclasses bucketed by severity
 (`critical`, `warnings`, `info`) plus dataset metadata.
+
+**New to tsauditor? Start with [`examples/getting_started`](examples/getting_started)**,
+a from-zero, runnable notebook covering the full scan → read → repair workflow on a
+small synthetic dataset, no assumptions made. It also corrects a real, verified case
+of an LLM getting the API wrong when asked to explain this library from just a link,
+worth a look if you've been getting confidently incorrect code from ChatGPT.
 
 
 
@@ -181,19 +190,19 @@ Codes marked **critical** block modeling; **warning** and **info** are advisory.
 
 Leakage checks are **rank-based**, chosen by target type:
 
-- **LEK001 — equivalence.** Continuous targets use `|Spearman ρ|`; binary targets use
+- **LEK001, equivalence.** Continuous targets use `|Spearman ρ|`; binary targets use
   **AUC separation** (`max(AUC, 1−AUC)`). This is deliberate: Pearson against a binary
   0/1 target is point-biserial correlation, which is capped near `√(2/π) ≈ 0.798`, so a
   feature whose sign *defines* the target scores only ~0.80 and slips under a naive
   threshold. AUC scores it 1.0.
-- **LEK002 — cross-correlation.** Flags features whose peak association with the target
+- **LEK002, cross-correlation.** Flags features whose peak association with the target
   falls at a *positive* lag (the feature aligns with the target's future).
-- **LEK003 — temporal lookahead.** Flags features that correlate with the future target
-  *beyond* what the target's own autocorrelation can explain — the signature of a
+- **LEK003, temporal lookahead.** Flags features that correlate with the future target
+  *beyond* what the target's own autocorrelation can explain, the signature of a
   forward-looking or centered window. The persistence baseline is what keeps a
   legitimate trailing feature from being false-flagged.
-- **LEK004 — as-of / point-in-time.** Flags a feature whose value sits at a timestamp
-  *earlier* than when it was actually published — the classic macro/sentiment trap. See
+- **LEK004, as-of / point-in-time.** Flags a feature whose value sits at a timestamp
+  *earlier* than when it was actually published, the classic macro/sentiment trap. See
   [As-of leakage](#as-of-leakage-point-in-time) below.
 
 LEK002/LEK003 are WARNING-level *suspicions*: in pure cross-correlation a genuine strong
@@ -245,7 +254,7 @@ counted as leakage in `leaky_columns()`.
 
 ## Repair & remediation
 
-tsauditor is advisory by default — it reports and suggests, but only edits your data when
+tsauditor is advisory by default, it reports and suggests, but only edits your data when
 you ask. Every repair happens on a **copy**; your original frame is your backup.
 
 ```python
@@ -267,7 +276,7 @@ print(report.last_fixes)     # structured change log: column, action, cells chan
 ```
 
 Repairs are **report-driven** (only flagged columns are touched), **time-series safe**
-(an outlier is set to NaN and imputed, never deleted — deleting rows would break the
+(an outlier is set to NaN and imputed, never deleted, deleting rows would break the
 index), and the **target label is never repaired** (interpolating a 0/1 label into
 fractions is always wrong).
 
@@ -289,7 +298,7 @@ report.to_pdf("report.pdf", df=df, fixed_df=clean)     # needs 'tsauditor[pdf]'
 ```
 
 `to_pdf` produces a formal, vector, text-selectable report (Times New Roman, black text,
-headings and tables — no charts, no colour coding): a Data Health Scorecard, dataset
+headings and tables, no charts, no colour coding): a Data Health Scorecard, dataset
 overview, before/after comparison, target-leakage callout, executive summary, and a
 paginated issues table.
 
@@ -297,7 +306,7 @@ paginated issues table.
 
 Zero-shot forecasters such as Google TimesFM tokenize a clean, contiguous, finite context
 window; a raw series with gaps fails tokenization. The adapter audits, repairs, and returns
-a plain `float32` array — and **verifies it is finite** before returning, so a NaN never
+a plain `float32` array, and **verifies it is finite** before returning, so a NaN never
 reaches the model. It adds no `timesfm` dependency.
 
 ```python
@@ -308,16 +317,16 @@ array = tsa.adapters.to_timesfm(df, target_col="close_price", domain="finance")
 array, report = tsa.adapters.to_timesfm(df, target_col="close_price", return_report=True)
 ```
 
-`context_len` / `min_context` are your knobs, not TimesFM constants — TimesFM 2.5 accepts a
+`context_len` / `min_context` are your knobs, not TimesFM constants, TimesFM 2.5 accepts a
 wide range of context lengths (up to 16k). See
-[`examples/timesfm_adapter`](examples/timesfm_adapter) for a full walkthrough — the
+[`examples/timesfm_adapter`](examples/timesfm_adapter) for a full walkthrough, the
 finiteness guard, context truncation, and the model call.
 
 ## Architecture
 
 ```
 tsauditor/
-├── scanner.py            # scan() — orchestrates all modules into a GuardReport
+├── scanner.py            # scan(), orchestrates all modules into a GuardReport
 ├── profiler/             # structural checks: frequency, missing, stationarity
 ├── anomaly/              # point.py, contextual.py
 ├── leakage/              # equivalence.py, correlation.py, temporal.py, asof.py
@@ -333,7 +342,7 @@ tsauditor/
 
 ## Scaling
 
-**polars input.** A polars `DataFrame` works anywhere a pandas one does — just name
+**polars input.** A polars `DataFrame` works anywhere a pandas one does, just name
 the datetime column via `time_col` (polars has no index):
 
 ```python
@@ -344,7 +353,7 @@ Install with `pip install 'tsauditor[polars]'`. tsauditor converts to pandas at 
 boundary; the audit logic is identical. (See issue #28.)
 
 **Panel (long-format) data.** If your frame stacks many entities with a repeated
-timestamp column — 500 stocks, 200 sensors, 50 stores — pass `group_col=` and each
+timestamp column, 500 stocks, 200 sensors, 50 stores, pass `group_col=` and each
 entity is audited as its own independent time series:
 
 ```python
@@ -353,7 +362,7 @@ report.summary()          # prevalence view: which findings are systemic vs isol
 ```
 
 Without it, a panel is treated as one interleaved series and the structural, anomaly
-and rolling checks are meaningless — a rolling window would span several entities at
+and rolling checks are meaningless, a rolling window would span several entities at
 once. `report.prevalence()` then answers the question that actually matters at scale:
 
 ```
@@ -361,7 +370,7 @@ CRITICAL  LEK001  ret    5/5   100.0%   <- systemic: suspect the pipeline
 WARNING   ANO002  price  1/5    20.0%   <- isolated: inspect that entity
 ```
 
-Repairs are panel-aware too — `apply_fixes()` partitions by entity, so one entity's
+Repairs are panel-aware too, `apply_fixes()` partitions by entity, so one entity's
 values can never fill another's gaps. See the [Panel Data](https://github.com/imann128/tsauditor/wiki/Panel-Data) wiki page.
 
 **Audit separate frames in parallel.** If your entities live in separate DataFrames
@@ -392,15 +401,15 @@ Run `pip install -e ".[dev,examples]"` for running all example notebooks easily.
 
 See [`examples/`](examples) (indexed in [`examples/README.md`](examples/README.md)):
 
-- `ogdc_leakage_case/` — the flagship LEK001 case on real OGDC data (script + notebook).
-- `beyond_price_direction/` — validity (VAL001/VAL002) on real volume, RSI, and OHLC
+- `ogdc_leakage_case/`, the flagship LEK001 case on real OGDC data (script + notebook).
+- `beyond_price_direction/`, validity (VAL001/VAL002) on real volume, RSI, and OHLC
   columns: concrete proof tsauditor audits more than price and direction.
-- `timesfm_adapter/` — the messy-data -> finite float32 array bridge for Google TimesFM
+- `timesfm_adapter/`, the messy-data -> finite float32 array bridge for Google TimesFM
   (finiteness guard, context truncation).
-- `sensor-example/` — structural/anomaly checks on a sensor stream, plus a PDF-report demo.
-- `new_features_walkthrough.ipynb` — LEK004, validity checks, `tsa.fix`, and the TimesFM
+- `sensor-example/`, structural/anomaly checks on a sensor stream, plus a PDF-report demo.
+- `new_features_walkthrough.ipynb`, LEK004, validity checks, `tsa.fix`, and the TimesFM
   adapter, end-to-end.
-- `validation_comparison/` — time-series validation vs general profiling.
+- `validation_comparison/`, time-series validation vs general profiling.
 
 ## Testing
 
@@ -430,17 +439,42 @@ ruff format --check .
 All three must pass; CI verifies them across Python 3.9–3.14 on Linux, Windows and macOS.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### Contributors
+
+- [@LuisMend12](https://github.com/LuisMend12) — [#51](https://github.com/imann128/tsauditor/pull/51),
+  fixing `GuardReport.to_dict()` silently omitting the `info` count from its totals
+  ([#43](https://github.com/imann128/tsauditor/issues/43)).
+
+## Questions, tutorials, and usage help
+
+Confused about how to use `tsauditor`, how a particular check applies to your data, want
+a tutorial or worked example on a domain not covered in [`examples/`](examples), or ran
+into something that doesn't match the docs? Reach out. Open a
+[GitHub Discussion](https://github.com/imann128/tsauditor/discussions) rather than
+emailing or DMing directly. It keeps the answer public and searchable, so the next person
+with the same question finds it instead of asking again, and it's the fastest way to get
+a reply.
+
+A comprehensive tutorial section, covering more domains and more of the library end to
+end, is actively being built. If the [`examples/`](examples) directory doesn't cover your
+case yet, ask anyway; it directly shapes what gets written next.
+
+Found an actual bug? Use the [Bug Report](https://github.com/imann128/tsauditor/issues/new?template=bug_report.md)
+template instead, see [Contributing](#contributing) above.
+
 ## Featured On:
 Featured in [PyCoder's Weekly Issue #745](https://pycoders.com/issues/745)
 
 Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.substack.com/p/data-science-weekly-issue-657)
 
+Featured on [Python Hub](https://pythonhub.dev)
+
 ## Status
 
-Beta (`0.3.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
-modules are implemented and tested (419 tests passing; CI across Python 3.9–3.14 on
+Beta (`0.4.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
+modules are implemented and tested (448 tests passing; CI across Python 3.9–3.14 on
 Linux, Windows, macOS).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

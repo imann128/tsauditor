@@ -23,12 +23,20 @@ def test_returns_1d_float32_array():
 
 
 def test_cleans_the_target_column():
-    """A clustered missing gap in the forecast series is repaired to finite."""
+    """A clustered missing gap in the forecast series is repaired to finite,
+    with a sane (interpolated) value, not merely to *some* finite value."""
     v = np.linspace(10, 20, 200)
     v[40:60] = np.nan  # clustered gap -> flagged and imputed
     df = pd.DataFrame({"y": v}, index=_idx(200))
     arr = to_timesfm(df, "y")
     assert np.isfinite(arr).all()
+    # The gap sits on a linear ramp roughly between v[39] (~12.0) and
+    # v[60] (~13.0); a correct time-interpolation lands inside that band. A
+    # broken fill (e.g. dropping to 0.0, or extrapolating unboundedly) would
+    # fail this without failing the isfinite check above.
+    gap = arr[40:60]
+    assert gap.min() > 11.5
+    assert gap.max() < 13.5
 
 
 def test_truncates_to_context_len_keeping_most_recent():

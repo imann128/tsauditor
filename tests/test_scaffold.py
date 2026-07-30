@@ -26,6 +26,36 @@ def test_package_imports():
     assert hasattr(tsa, "adapters")
 
 
+def test_leakage_package_reexports_every_detector():
+    """
+    Regression: `audit_combination_leakage` (LEK005) was importable only via
+    `tsauditor.leakage.combination`, not `tsauditor.leakage` -- unlike every
+    other detector in the package, which is reachable both ways. A user
+    following the documented `from tsauditor.leakage import ...` pattern
+    would hit an ImportError specifically for LEK005.
+    """
+    from tsauditor.leakage import (
+        audit_correlation_leakage,
+        audit_equivalence,
+        audit_temporal_leakage,
+        audit_asof_leakage,
+        audit_combination_leakage,
+    )
+
+    for fn in (
+        audit_correlation_leakage,
+        audit_equivalence,
+        audit_temporal_leakage,
+        audit_asof_leakage,
+        audit_combination_leakage,
+    ):
+        assert callable(fn)
+
+    import tsauditor.leakage as leakage_pkg
+
+    assert "audit_combination_leakage" in leakage_pkg.__all__
+
+
 def test_version_is_well_formed_and_consistent():
     """
     The version lives in two places — ``tsauditor/__init__.py`` and

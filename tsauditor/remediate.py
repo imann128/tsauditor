@@ -492,6 +492,8 @@ def fix(
     target: Optional[str] = None,
     time_col: Optional[str] = None,
     domain: Optional[str] = None,
+    available_at: Optional[dict] = None,
+    constraints: Optional[dict] = None,
     missing: Optional[str] = "interpolate",
     outliers: Optional[str] = "clip",
     stuck: Optional[str] = "nan",
@@ -511,8 +513,15 @@ def fix(
 
     Parameters
     ----------
-    df, target, time_col, domain
-        Passed through to ``scan``.
+    df, target, time_col, domain, available_at, constraints
+        Passed through to ``scan``. Without ``available_at=``, LEK004 (as-of
+        leakage) never runs; without ``constraints=``, VAL001/VAL002 never
+        run — both are opt-in because tsauditor cannot infer a release
+        schedule or a validity bound on its own. Before this, the only way to
+        exercise either check together with a one-shot repair was to call
+        ``scan()`` and ``apply_fixes()`` separately; ``fix()`` silently
+        skipped them with no error, which read as "nothing wrong" rather
+        than "not checked."
     missing, outliers, stuck, leakage, verbose
         Passed through to ``apply_fixes``.
 
@@ -528,7 +537,14 @@ def fix(
     """
     from tsauditor.scanner import scan
 
-    report = scan(df, target=target, time_col=time_col, domain=domain)
+    report = scan(
+        df,
+        target=target,
+        time_col=time_col,
+        domain=domain,
+        available_at=available_at,
+        constraints=constraints,
+    )
     clean = apply_fixes(
         report,
         df,

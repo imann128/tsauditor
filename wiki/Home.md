@@ -2,7 +2,7 @@
 
 A data quality auditing library for **time-series tabular data**, with a focus on financial and sensor domains.
 
-`tsauditor` scans a pandas (or polars) DataFrame and returns a structured report of structural problems, anomalies, and — its core contribution — **data leakage** between features and the prediction target. Since **0.2.0** it can also *repair* the flagged issues on a copy, score data health, export a formal report, and hand a clean array to a forecasting model.
+`tsauditor` scans a pandas (or polars) DataFrame and returns a structured report of structural problems, anomalies, and, its core contribution, **data leakage** between features and the prediction target. Since **0.2.0** it can also *repair* the flagged issues on a copy, score data health, export a formal report, and hand a clean array to a forecasting model.
 
 ```python
 import tsauditor as tsa
@@ -17,7 +17,7 @@ report.summary()
 
 A direction-prediction model on OGDC (Pakistani equity) data reached **99.68% accuracy**. That number was a lie.
 
-One feature, `ChangeP`, was the same-day percentage change in price. The target, `Direction`, was defined as `1 if ChangeP > 0 else 0`. The feature did not merely *predict* the target — it *was* the target, wearing a different name. Remove it and accuracy falls to **69.81%**, which is the honest number.
+One feature, `ChangeP`, was the same-day percentage change in price. The target, `Direction`, was defined as `1 if ChangeP > 0 else 0`. The feature did not merely *predict* the target, it *was* the target, wearing a different name. Remove it and accuracy falls to **69.81%**, which is the honest number.
 
 Nothing about `ChangeP` looks wrong when you inspect it. It is an ordinary float column with an ordinary distribution and no missing values. Standard profiling tools do not catch this, because they treat tabular rows as independent samples and never ask *when* each value became knowable relative to the moment of prediction.
 
@@ -32,7 +32,8 @@ That is the class of mistake `tsauditor` exists to catch automatically. See the 
 | Page | What it covers |
 | ---- | -------------- |
 | [Installation](Installation) | `pip install`, extras, development setup |
-| [Quickstart](Quickstart) | Your first scan, repair, and export — 5 minutes |
+| [Quickstart](Quickstart) | Your first scan, repair, and export: 5 minutes |
+| [`examples/getting_started`](https://github.com/imann128/tsauditor/tree/main/examples/getting_started) | The same workflow as a runnable notebook, no assumptions made |
 | [How It Works](How-it-works) | The scan pipeline, end to end |
 
 **When you need to understand a specific finding:**
@@ -40,11 +41,11 @@ That is the class of mistake `tsauditor` exists to catch automatically. See the 
 | Page | What it covers |
 | ---- | -------------- |
 | [Issue Code Reference](Issue-code-reference) | Lookup table for every PRF / ANO / LEK / VAL code |
-| [Profiler Detectors](Detectors-Profiler) | PRF001–PRF007 — gaps, duplicates, missingness, stationarity, infinite values |
-| [Anomaly Detectors](Detectors-Anomaly) | ANO001–ANO003 — stuck values, outliers, contextual spikes |
-| [Leakage Detectors](Detectors-Leakage) | LEK001–LEK004 — the core of the library |
-| [Validity Detectors](Detectors-Validity) | VAL001–VAL002 — declared domain rules |
-| [Panel Data](Panel-Data) | PNL001, PNL003, PNL004 — multi-entity / long-format data |
+| [Profiler Detectors](Detectors-Profiler) | PRF001–PRF007: gaps, duplicates, missingness, stationarity, infinite values |
+| [Anomaly Detectors](Detectors-Anomaly) | ANO001–ANO003: stuck values, outliers, contextual spikes |
+| [Leakage Detectors](Detectors-Leakage) | LEK001–LEK004: the core of the library |
+| [Validity Detectors](Detectors-Validity) | VAL001–VAL002: declared domain rules |
+| [Panel Data](Panel-Data) | PNL001, PNL003, PNL004: multi-entity / long-format data |
 
 **Reference material:**
 
@@ -90,11 +91,11 @@ Critical: 2  Warnings: 39  Info: 4
 
 ## Design philosophy
 
-**Advisory by default.** `tsauditor` detects and suggests. It never edits your data *unless* you explicitly call `apply_fixes()` or `fix()` — and even then it works on a **copy**, leaving your original untouched, and it never repairs the target label.
+**Advisory by default.** `tsauditor` detects and suggests. It never edits your data *unless* you explicitly call `apply_fixes()` or `fix()`, and even then it works on a **copy**, leaving your original untouched, and it never repairs the target label.
 
 **Time-aware.** Every check reasons about the temporal order of your data, not just its distribution. This extends to *point-in-time* availability (LEK004): a value must not be used before it was published.
 
-**Declarative, not magical.** `tsauditor` never guesses release dates or validity rules. As-of leakage (`available_at=`) and validity constraints (`constraints=`) are opt-in — you declare them, `tsauditor` verifies them.
+**Declarative, not magical.** `tsauditor` never guesses release dates or validity rules. As-of leakage (`available_at=`) and validity constraints (`constraints=`) are opt-in, you declare them, `tsauditor` verifies them.
 
 **Domain-aware.** Finance and sensor data have different thresholds for "normal." The `domain` parameter tunes the checks accordingly. See [Domain Presets](Domain-Presets).
 

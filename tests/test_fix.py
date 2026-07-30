@@ -78,8 +78,14 @@ def test_clip_pulls_in_the_outlier():
 
 def test_drop_is_an_alias_for_nan_and_never_deletes_rows():
     df = _make_df()
-    out = _report(df).apply_fixes(df, outliers="drop", missing=None, stuck=None)
+    report = _report(df)
+    out = report.apply_fixes(df, outliers="drop", missing=None, stuck=None)
+    out_nan = report.apply_fixes(df, outliers="nan", missing=None, stuck=None)
+
     assert len(out) == len(df)  # rows preserved, not deleted
+    assert pd.isna(out["price"].iloc[100])  # the 500 spike actually became NaN,
+    # not silently left untouched by a no-op "drop"
+    pd.testing.assert_frame_equal(out, out_nan)  # truly an alias, not just similar
 
 
 def test_outlier_nan_count_matches_detector_evidence():
@@ -209,6 +215,58 @@ def test_fix_protects_the_target():
     clean, report = tsa.fix(df, target="Direction")
     pd.testing.assert_series_equal(clean["Direction"], snapshot)  # label intact
     assert all(e["column"] != "Direction" for e in report.last_fixes)
+
+
+# ── available_at / constraints (#42) ───────────────────────────────────────────
+
+
+def test_fix_accepts_available_at_and_runs_lek004():
+    """
+    Before this, fix() had no way to pass available_at, so LEK004 silently
+    never ran under the one-shot wrapper, not because the data was clean, but
+    because the check was never given the release-schedule metadata it needs.
+    """
+    import tsauditor as tsa
+
+    idx = pd.date_range("2020-01-01", periods=60, freq="D")
+    df = pd.DataFrame(
+        {"cpi": np.linspace(1, 5, 60), "price": np.linspace(10, 20, 60)}, index=idx
+    )
+
+    clean, report = tsa.fix(
+        df, available_at={"cpi": pd.Timedelta(days=30)}, leakage=None
+    )
+
+    assert any(i.code == "LEK004" for i in report.critical)
+    assert "cpi" in report.leaky_columns()
+    assert clean is not df
+
+
+def test_fix_accepts_constraints_and_runs_validity():
+    """Same gap for VAL001/VAL002: constraints= had no path into fix()."""
+    import tsauditor as tsa
+
+    idx = pd.date_range("2020-01-01", periods=60, freq="D")
+    bid = np.full(60, 100.0)
+    ask = np.full(60, 100.2)
+    ask[30] = 99.0  # a crossed book: bid > ask
+    df = pd.DataFrame({"bid": bid, "ask": ask}, index=idx)
+
+    clean, report = tsa.fix(df, constraints={"relations": [("bid", "ask")]})
+
+    assert any(i.code == "VAL002" for i in report.critical)
+    assert clean is not df
+
+
+def test_fix_without_available_at_or_constraints_is_unaffected():
+    """Back-compat: omitting the new parameters must behave exactly as before."""
+    import tsauditor as tsa
+
+    df = _make_df()
+    clean, report = tsa.fix(df, missing="interpolate", outliers="clip", stuck="nan")
+
+    assert isinstance(report, GuardReport)
+    assert clean["price"].max() < 100
 
 
 # ── Contextual spikes (ANO003) folded into the outlier handler ────────────────

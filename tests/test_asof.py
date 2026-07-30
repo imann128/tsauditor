@@ -70,6 +70,19 @@ def test_min_violations_threshold_suppresses():
     assert audit_asof_leakage(df, {"macro": avail}, min_violations=2) == []
 
 
+def test_exactly_min_violations_fires():
+    """The gate is `< min_violations`, so exactly min_violations early rows
+    must still flag, not be suppressed."""
+    idx = _idx(10)
+    df = pd.DataFrame({"macro": np.arange(10.0)}, index=idx)
+    avail = pd.Series(idx, index=idx)
+    avail.iloc[3] = idx[3] + pd.Timedelta(days=2)
+    avail.iloc[5] = idx[5] + pd.Timedelta(days=2)  # exactly 2 violations
+    issues = audit_asof_leakage(df, {"macro": avail}, min_violations=2)
+    assert len(issues) == 1
+    assert issues[0].evidence["n_violations"] == 2
+
+
 def test_nan_values_are_not_violations():
     """A missing value carries no information, so it cannot leak."""
     idx = _idx(10)

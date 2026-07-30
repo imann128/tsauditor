@@ -6,10 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [0.4.0] - 2026-07-30
 
-### Fixed — `audit_combination_leakage` was unreachable from `tsauditor.leakage`
+### Fixed: `audit_combination_leakage` was unreachable from `tsauditor.leakage`
 
 - **LEK005 was importable only via `tsauditor.leakage.combination`, not
-  `tsauditor.leakage`** — every other detector in the package (equivalence,
+  `tsauditor.leakage`**: every other detector in the package (equivalence,
   correlation, temporal, asof) is reachable both ways. A user following the
   pattern documented on the wiki's API Reference page,
   `from tsauditor.leakage import audit_...`, would hit an `ImportError`
@@ -18,10 +18,43 @@ All notable changes to this project are documented here. The format is based on
   docstring. Caught while cross-checking the wiki against the actual public
   surface.
 
-### Fixed — `to_dict()` undercounted issues
+### Fixed: pre-publish sweep
+
+A final correctness/docs pass before release, run specifically because the
+project's original motivation was a statistical bug that looked clean on the
+surface (the OGDC `ChangeP` leak). Nothing below changes detector behavior;
+it's the surrounding infrastructure and docs that were wrong.
+
+- **`.gitattributes` was UTF-16 encoded.** Git cannot parse a `text=auto`
+  rule from a UTF-16 file, so line-ending normalization silently never
+  worked: the root cause of "every file shows as modified" recurring
+  throughout this project's history. Rewritten as plain UTF-8. Re-running
+  `git add --renormalize .` afterward took the working-tree diff from 81
+  files / ~27,600 changed lines down to the ~40 files actually touched this
+  release.
+- **README told users to write `domain="None"`** (the string) for
+  domain-agnostic scans. That actually raises `ValueError`: only Python's
+  `None`, or omitting `domain=` entirely, is accepted. Text corrected to
+  say so explicitly.
+- **A wiki anchor link was broken.** `Detectors-Anomaly.md` linked to
+  `Internals#_outlier_mask`, but the actual heading is
+  `` `_outlier_mask(values, z_thresh)` ``, which slugifies differently.
+  Found via a full link-integrity check across all 17 wiki pages (now
+  zero broken internal links); fixed.
+- **`tsauditor/anomaly/__init__.py`'s docstring described a `classifier`
+  module** that was never implemented. Removed the phantom reference.
+- **Two tests asserted less than their own names promised.**
+  `test_drop_is_an_alias_for_nan_and_never_deletes_rows` only checked row
+  count, not that the cell actually became `NaN`; `test_cleans_the_target_column`
+  (TimesFM adapter) only checked the imputed value was finite, not that it
+  was a sane interpolation. Both strengthened.
+- **README's test count and a wiki version string were stale** (430 vs. the
+  actual 448; two `0.3.0` references left over from the last release).
+
+### Fixed: `to_dict()` undercounted issues
 
 - **`GuardReport.to_dict()` omitted the `info` count**, so its `counts` total
-  didn't match `to_json()`'s for the same report — a caller reading counts
+  didn't match `to_json()`'s for the same report: a caller reading counts
   from `to_dict()` alone would see fewer issues than actually exist.
   ([#43](https://github.com/imann128/tsauditor/issues/43), fixed in
   [#51](https://github.com/imann128/tsauditor/pull/51) by
@@ -37,7 +70,7 @@ All notable changes to this project are documented here. The format is based on
   the JSON-specific extras (`leaky_columns`, `panel`, `health`) on top, so
   the two structurally cannot drift apart again.
 
-### Added — `fix()` accepts `available_at` and `constraints`
+### Added: `fix()` accepts `available_at` and `constraints`
 
 - **`tsa.fix()` can now run LEK004 (as-of leakage) and VAL001/VAL002
   (validity) as part of a one-shot repair.**
@@ -50,15 +83,15 @@ All notable changes to this project are documented here. The format is based on
   "nothing wrong" rather than "not checked." `fix(df, available_at=...,
   constraints=...)` now forwards both to the underlying `scan()` call.
 
-### Added — PNL004 reports rows with a null entity id
+### Added: PNL004 reports rows with a null entity id
 
 - **New issue code `PNL004` (WARNING) for panel rows where `group_col` is
   null.** ([#48](https://github.com/imann128/tsauditor/issues/48))
 
   `df.groupby(group_col)` drops null keys by default, which is the only sound
-  choice for coverage/short-history comparisons — there is no entity identity
+  choice for coverage/short-history comparisons: there is no entity identity
   to compare. But it meant rows with a null entity id received **zero**
-  checks under `scan()` (not panel-level, not per-entity — they simply never
+  checks under `scan()` (not panel-level, not per-entity; they simply never
   entered the loop) and were silently left untouched by `apply_fixes()`,
   with nothing in the report saying so. A null-id row looked identical to a
   clean one.
@@ -67,7 +100,7 @@ All notable changes to this project are documented here. The format is based on
   otherwise unchanged: these rows are still excluded from every other check
   (there genuinely is nothing sound to compare them against) and still left
   unrepaired by `apply_fixes()` (no single entity's distribution to repair
-  them from) — the skip in `apply_fixes()` is now explicit and logged in
+  them from): the skip in `apply_fixes()` is now explicit and logged in
   `last_fixes` rather than an accidental consequence of `NaN != NaN`.
 
 ### Internal
@@ -77,17 +110,17 @@ All notable changes to this project are documented here. The format is based on
   reference a `df`/`report` from the reader's own session and are marked
   `# doctest: +SKIP`; the ones that are fully self-contained (e.g.
   `audit_equivalence`) are actually executed. Runs once per CI matrix
-  (ubuntu, Python 3.11), not on every cell — this catches a docstring going
+  (ubuntu, Python 3.11), not on every cell: this catches a docstring going
   stale after a signature or return-type change without adding 18x runtime.
 - **Consolidated `_encode_target`.** ([#40](https://github.com/imann128/tsauditor/issues/40))
   `correlation.py` and `temporal.py` now import a shared `encode_target()`
   from the new `leakage/_common.py` instead of each carrying a byte-identical
-  copy. `equivalence.py` keeps its own inline version deliberately — it
+  copy. `equivalence.py` keeps its own inline version deliberately: it
   forces any binary target to 0.0/1.0 (needed for its AUC math), which is a
   real behavioral difference from the shared helper's numeric-passthrough,
   not incidental duplication.
 
-### Added — PRF007 reports infinite values
+### Added: PRF007 reports infinite values
 
 - **New issue code `PRF007` (CRITICAL) for `inf` and `-inf` in numeric columns,
   and `apply_fixes()` now removes them.**
@@ -143,7 +176,7 @@ All notable changes to this project are documented here. The format is based on
   either way. The change matters for correctness of attribution rather than for
   the number.
 
-### Changed — LEK002 no longer reports leakage between independent columns
+### Changed: LEK002 no longer reports leakage between independent columns
 
 - **`audit_correlation_leakage` default `min_correlation` raised from 0.1 to 0.5.**
   ([#49](https://github.com/imann128/tsauditor/issues/49))
@@ -179,7 +212,7 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-07-26
 
 Panel (multi-entity) support, multivariate leakage detection, and two data-corruption
-fixes. All additive to the public API — nothing was removed or renamed — so existing
+fixes. All additive to the public API (nothing was removed or renamed) so existing
 single-series code runs unchanged.
 
 **Headline:** `scan(df, group_col="ticker")` audits long-format panels entity by
@@ -189,14 +222,14 @@ of once a common factor dominates. Two silent-corruption bugs are fixed: `apply_
 filling one entity's gaps with another's values, and `audit_point_anomalies` crashing
 on any frame with duplicate timestamps.
 
-### Fixed — panel repair corrupted data across entities
+### Fixed: panel repair corrupted data across entities
 - **`apply_fixes()` and `fix()` are now panel-aware.** When the report came from a
   `group_col=` scan, each entity is repaired as its own independent time series.
 
   Previously the frame was repaired as one interleaved series, which carried
   values across entity boundaries. Measured on a two-entity panel where one
   series sits near 10 and the other near 1000, a gap in the low series was filled
-  with **~1000** — the other entity's values — silently and with no warning. It
+  with **~1000** (the other entity's values) silently and with no warning. It
   now fills with ~10, correctly.
 
   Write-back is positional rather than label-based, because a panel index repeats
@@ -206,9 +239,9 @@ on any frame with duplicate timestamps.
   column frame-wide rather than once per entity. Single-series behaviour is
   unchanged.
 
-### Added — multivariate leakage detection
+### Added: multivariate leakage detection
 - **LEK005: combination leakage.** A group of **two or three** features that
-  together reconstruct the target while none does alone — the shape produced by a
+  together reconstruct the target while none does alone: the shape produced by a
   target defined as a difference, mean, spread, product or ratio. Every previous
   leakage check was univariate and structurally could not see this: with
   `target = x1 - x2` and independent inputs, each feature correlates with the
@@ -217,18 +250,18 @@ on any frame with duplicate timestamps.
 
   Uses adjusted R² from an OLS fit, over two algebraic forms: **linear** (sums,
   differences) and **log** (products, ratios, since `log(a*b) = log a + log b`).
-  Neither alone is sufficient — measured coverage: `x1-x2` scores 1.00 linear /
+  Neither alone is sufficient; measured coverage: `x1-x2` scores 1.00 linear /
   0.01 log, `x1*x2` scores 0.93 / 1.00, `x1/x2` scores 0.83 / 1.00. An
   interaction term was tested as an alternative and rejected: it catches products
   but not ratios, and doubles the chance-level R². The form used is reported in
   `evidence["form"]`.
 
   Raw values rather than ranks, because the leakage is arithmetic and ranking
-  destroys it — the canonical case scores 1.0000 raw but 0.9410 on ranks, which
+  destroys it: the canonical case scores 1.0000 raw but 0.9410 on ranks, which
   would slip under the threshold.
 
   The log form fits `log|y| ~ log|X|` on **absolute** values, so products and
-  ratios of *signed* data are recovered too — `|a*b| = |a|*|b|` holds regardless
+  ratios of *signed* data are recovered too: `|a*b| = |a|*|b|` holds regardless
   of sign. On signed inputs the linear form scores 0.009 for a product, i.e.
   completely blind, while the absolute-log form scores 1.000. Columns whose
   values touch zero fall back to the linear form, since `log` of a near-zero
@@ -237,13 +270,13 @@ on any frame with duplicate timestamps.
   **Groups larger than two, without O(k^n).** Rather than scanning C(k,3) groups
   (161,700 for 100 features), the search deepens iteratively: a group is extended
   by one column only when it reaches `gate` (0.30) without reaching the flagging
-  threshold — the signature of a sub-group of a larger identity. If
+  threshold: the signature of a sub-group of a larger identity. If
   `target = a+b+c`, any pair from those three already scores ~0.71; inside a
   4-way identity a pair scores ~0.49. On random data nothing clears the gate, so
   deeper levels cost nothing and add no false positives.
 
   `max_group_size` defaults to 3. Raise it to find larger identities;
-  `max_candidates_per_level` (default 200) bounds the cost — without it a frame of
+  `max_candidates_per_level` (default 200) bounds the cost: without it a frame of
   40 mutually correlated features took 21s at depth 4, and 0.7s with it.
 
   A group is skipped when any column *alone* already reaches the threshold, so a
@@ -259,7 +292,7 @@ on any frame with duplicate timestamps.
   target. On random data the highest adjusted R² reached by chance across 1,225
   pairs was 0.075.
 
-- **PNL002: cross-sectional lookahead.** The panel-native leak — a rank, z-score
+- **PNL002: cross-sectional lookahead.** The panel-native leak: a rank, z-score
   or sector-neutralised feature computed across entities at t+1 and joined back to
   t. Runs automatically for panel scans with a target.
 
@@ -268,13 +301,13 @@ on any frame with duplicate timestamps.
   own outcome and their detection falls from 100% of entities to 22.5%, while the
   cross-sectional signal is unaffected. Worse than a plain miss: at a 25:1 ratio
   LEK002 flagged the *legitimate* cross-sectional feature in 11 of 40 entities and
-  the *leak* in 13 of 40 — no discriminating power — and `prevalence()` then
+  the *leak* in 13 of 40 (no discriminating power) and `prevalence()` then
   reports a leak present in 100% of entities as affecting 32%, which reads as
   "isolated". Reproduce with `python docs/proposals/pnl002_evidence.py`.
 
   Calibrated against simulated factors: realistic rank-ICs (0.02-0.15) are not
   flagged; 0.30 and above are. Gated on 20+ co-present entities per timestamp and
-  30+ scored timestamps. Vectorised — 0.05s for 40 entities where a per-timestamp
+  30+ scored timestamps. Vectorised: 0.05s for 40 entities where a per-timestamp
   loop took 4.0s, and 0.72s for 200 entities x 1500 timestamps.
 
 ### Added
@@ -282,10 +315,10 @@ on any frame with duplicate timestamps.
   partitions the frame by entity and audits each as its own independent time
   series; every issue is tagged with `Issue.group`. Previously a panel had to be
   scanned as one interleaved series, which made the structural, anomaly and
-  rolling checks meaningless — a 21-point rolling window would span several
+  rolling checks meaningless: a 21-point rolling window would span several
   entities at once. No detector logic changed: the partition happens in the
   scanner, so panel and single-series results stay consistent by construction.
-- `GuardReport.prevalence()` — how widely each finding occurs across entities,
+- `GuardReport.prevalence()`: how widely each finding occurs across entities,
   the headline output of a panel scan. A 500-entity panel can produce tens of
   thousands of issues; what matters is whether a finding is systemic (100% of
   entities → pipeline bug) or isolated (a few percent → inspect those entities).
@@ -293,23 +326,23 @@ on any frame with duplicate timestamps.
 - `GuardReport.groups()`, `.groups_affected(code=, column=, severity=)`, and
   `.is_panel`; `filter()` gains `column=` and `group=` arguments.
 - New `tsauditor.panel` module with `audit_panel_structure`:
-  - **PNL001** (WARNING) — ragged panel: entities do not share a common time
+  - **PNL001** (WARNING): ragged panel: entities do not share a common time
     index, which silently breaks every cross-sectional operation while looking
     fine per entity.
-  - **PNL003** (INFO) — entities below the 30-row `min_obs` floor, so their
+  - **PNL003** (INFO): entities below the 30-row `min_obs` floor, so their
     *absence* of findings is not evidence of health.
-  - PNL002 is reserved for cross-sectional lookahead detection — proposed with
+  - PNL002 is reserved for cross-sectional lookahead detection, proposed with
     measured evidence in `docs/proposals/pnl002-cross-sectional-leakage.md`,
     reproducible via `docs/proposals/pnl002_evidence.py`.
 - `to_json()` gains a `panel` block (`group_col`, `n_groups`, `prevalence`) for
   panel scans. Single-series JSON output is unchanged.
 
 - **ANO002 evidence gains `esd_outlier_count` and `masking_suspected`**, from
-  Rosner's Generalized ESD test (1983). **Diagnostic only — flagging is unchanged.**
+  Rosner's Generalized ESD test (1983). **Diagnostic only: flagging is unchanged.**
 
   This resolves a genuine ambiguity in the existing output. A zero
-  `agreement_count` has two opposite causes — a harmlessly skewed column, or
-  contamination heavy enough to blind the z-score half of the rule — and the
+  `agreement_count` has two opposite causes: a harmlessly skewed column, or
+  contamination heavy enough to blind the z-score half of the rule, and the
   counts alone cannot tell them apart. At 5% contamination the z-score reports 0
   while the IQR rule correctly finds every planted outlier, which looks identical
   to ordinary skew. ESD removes the most extreme point and *recomputes* the scale
@@ -318,7 +351,7 @@ on any frame with duplicate timestamps.
   reports 0 on clean Gaussian data where the IQR rule gives 10 false positives.
 
   Computed only for the ambiguous case (z-score count 0, IQR count above 0) and
-  reported as `None` otherwise, since it is O(k*n) — about 27ms on 1,000 points.
+  reported as `None` otherwise, since it is O(k*n): about 27ms on 1,000 points.
 
 ### Changed
 - **Threshold resolution is now consistent across detectors.** `domain` supplies
@@ -334,8 +367,8 @@ on any frame with duplicate timestamps.
   `audit_contextual_anomalies`.
 
 ### Fixed
-- **`audit_point_anomalies` crashed on any frame with duplicate timestamps** —
-  i.e. on all panel data — with `TypeError: cannot convert the series to
+- **`audit_point_anomalies` crashed on any frame with duplicate timestamps** (i.e.
+  on all panel data) with `TypeError: cannot convert the series to
   <class 'float'>`. `series.loc[z.idxmax()]` returns a Series rather than a
   scalar when the index has repeats. The worst point is now located
   positionally.
@@ -346,15 +379,15 @@ on any frame with duplicate timestamps.
 - `audit_point_anomalies` now neutralises `inf` / `-inf` before computing
   statistics, as every other detector already did. Previously a single `inf` made
   the column mean `inf` and its standard deviation `NaN`, so all comparisons
-  evaluated `False` and the column was skipped whole — hiding genuine outliers
+  evaluated `False` and the column was skipped whole: hiding genuine outliers
   sitting alongside the `inf`, and emitting numpy `RuntimeWarning`s.
 - `audit_point_anomalies` now guards against a `NaN` standard deviation
   (`std == 0 or pd.isna(std)`), matching the guard already present in its repair
   mirror `remediate._outlier_mask`.
 
 ### Documentation
-- `CONTRIBUTING.md` now lists all three checks CI runs — `pytest -q`,
-  `ruff check .` and `ruff format --check .` — rather than only the tests. It
+- `CONTRIBUTING.md` now lists all three checks CI runs (`pytest -q`,
+  `ruff check .` and `ruff format --check .`) rather than only the tests. It
   previously mentioned `pytest` alone, so a contributor could pass everything
   documented and still fail CI on formatting. Also states that `[dev]` is the
   extra to install, since a plain `pip install -e .` provides neither `ruff` nor
@@ -367,7 +400,7 @@ on any frame with duplicate timestamps.
 - New test `test_multiple_leaky_features_all_flagged` covers a case the suite
   missed: every existing equivalence test plants a *single* leaky feature, so
   none of them would notice the detector stopping after the first. Verified by
-  mutation — breaking the loop to report only one column fails this test and no
+  mutation: breaking the loop to report only one column fails this test and no
   other. Thanks to @azeque-art (#37).
 - Added `MANIFEST.in`. setuptools walks the working tree when building an sdist
   and does not read `.gitignore`, so a local `.venv` was traversed and
@@ -379,7 +412,7 @@ on any frame with duplicate timestamps.
   `Issue.group` and PNL codes, joblib round-tripping of `is_panel` / `groups()`
   / `prevalence()`, and polars input combined with `group_col`. These only run
   when the `[pdf]` / `[polars]` / `[dev]` extras are installed, so a plain
-  `pip install -e .` skips them — install `.[dev]` to exercise them locally as
+  `pip install -e .` skips them: install `.[dev]` to exercise them locally as
   CI does.
 - `test_scaffold.py` no longer asserts a hardcoded version string. It now checks
   that `tsauditor.__version__` is well-formed and **agrees with
@@ -400,22 +433,22 @@ on any frame with duplicate timestamps.
 
 Feature release: as-of leakage detection, domain-validity checks, a one-shot
 repair API, the TimesFM adapter, and the remediation/health/PDF/polars/joblib
-work — all additive and backward compatible with 0.1.x.
+work: all additive and backward compatible with 0.1.x.
 
 ### Added
 - As-of / point-in-time leakage check (LEK004): `scan(df, available_at=...)` flags
   a feature whose value sits at a timestamp earlier than when it was actually
-  published (macro releases, sentiment, earnings). Opt-in — availability cannot be
+  published (macro releases, sentiment, earnings). Opt-in: availability cannot be
   inferred from values alone; declare it per column as per-row publish timestamps
   (a `pd.Series`) or a fixed publication lag (a `pd.Timedelta`). CRITICAL.
 - Domain-validity checks (`validity` module): `scan(df, constraints=...)` verifies
-  declared rules — per-column `bounds` (e.g. a spread must be strictly positive,
+  declared rules: per-column `bounds` (e.g. a spread must be strictly positive,
   sentiment within [-1, 1]; VAL001, WARNING) and `relations` such as `("bid","ask")`
   to catch a crossed book (VAL002, CRITICAL). Validity issues are not counted as
   leakage.
 - TimesFM adapter: `tsa.adapters.to_timesfm(df, target_col=...)` audits, repairs,
   and formats a single series into a 1-D float32 array for Google TimesFM. Cleans
-  the target as an ordinary column (not protected — it's the series to forecast),
+  the target as an ordinary column (not protected; it's the series to forecast),
   verifies the result is finite before returning (so no NaN reaches the model), and
   can return the audit trail via `return_report=True`. Adds no `timesfm` dependency.
 - Example notebook `examples/new_features_walkthrough.ipynb` (built and executed by
@@ -426,15 +459,15 @@ work — all additive and backward compatible with 0.1.x.
   (`report.last_fixes`, `leaky_columns()`, issue list) is never silently discarded.
   The original frame is untouched; `clean_df` is an independent copy.
 - Performance: LEK002 cross-correlation rank-transforms each series once instead of
-  re-ranking on every lag — ~12x faster on wide frames, with identical flags/peak-lags
+  re-ranking on every lag: ~12x faster on wide frames, with identical flags/peak-lags
   (verified). `scan(run_stationarity=False)` skips the ADF test (the runtime hot spot,
   ~6x faster full scan), and `audit_stationarity(max_lag=...)` caps the ADF lag search.
 - polars support (issue #28): `scan()` accepts a polars DataFrame, converting to pandas
-  at the boundary. polars has no index, so a polars input must pass `time_col=` — the
+  at the boundary. polars has no index, so a polars input must pass `time_col=`: the
   error message says so. Optional `[polars]` extra; no new hard dependency.
 - joblib/pickle hardening: `GuardReport` and `Issue` round-trip through `pickle`/`joblib`
   (tested), enabling `joblib.Parallel` audits across a symbol universe. README recipe added.
-- `leakage` module fully implemented: LEK001 (rank-based target equivalence —
+- `leakage` module fully implemented: LEK001 (rank-based target equivalence:
   Spearman for continuous targets, AUC separation for binary), LEK002 (positive-lag
   cross-correlation), LEK003 (rolling-window lookahead via excess-over-persistence).
 - Test suites for the leakage module: `test_equivalence.py`, `test_correlation.py`,
@@ -442,14 +475,14 @@ work — all additive and backward compatible with 0.1.x.
 - Standard repository files: `README.md`, `LICENSE`, `CHANGELOG.md`, CI workflow.
 - Advisory layer: `Issue.suggestion`, `GuardReport.suggestions()` and `leaky_columns()`.
 - Report-driven auto-remediation: `GuardReport.apply_fixes(df, ...)` returns a repaired
-  copy (original untouched), fixing only flagged columns — clip/NaN outliers, NaN+impute
+  copy (original untouched), fixing only flagged columns: clip/NaN outliers, NaN+impute
   stuck runs, impute missing clusters, opt-in leakage-column drop. Records `report.last_fixes`.
   Contextual spikes (ANO003) are also repaired: clipped to their local rolling band or
   NaN-ed, distinct from global outlier (ANO002) bounds.
 - Data Health Score: `GuardReport.health_score(df)` = % of numeric cells not implicated by
   quality issues (leakage excluded). Surfaced in `to_json` with affected/total cells and an
   optional before/after delta.
-- PDF export: `GuardReport.to_pdf(path, df=..., fixed_df=...)` — a formal, vector,
+- PDF export: `GuardReport.to_pdf(path, df=..., fixed_df=...)`: a formal, vector,
   text-selectable report (Times New Roman, black text, headings, tables): Data Health
   Scorecard, dataset overview, before/after, target-leakage callout, executive summary,
   and a paginated issues table. No charts (visualising the series is left to the user)

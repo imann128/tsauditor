@@ -78,7 +78,7 @@ pip install -e ".[dev]"
 ```
 
 **Note:** For domain-agnostic usage, either omit `domain=` entirely or pass `domain=None`
-(Python's `None`, not the string `"None"` — passing the string raises `ValueError`, since
+(Python's `None`, not the string `"None"`: passing the string raises `ValueError`, since
 only `"finance"`, `"sensor"`, and `None` are accepted). Omitting it is equivalent; `None`
 is already the default.
 
@@ -128,7 +128,7 @@ import pandas as pd
 import tsauditor as tsa
 
 print(" Fetching real-world weather station sensor dataset...")
-url = "[https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv](https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv)"
+url = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
 
 try:
     df = pd.read_csv(url, parse_dates=["Date"], index_col="Date")
@@ -329,7 +329,8 @@ tsauditor/
 ├── scanner.py            # scan(), orchestrates all modules into a GuardReport
 ├── profiler/             # structural checks: frequency, missing, stationarity
 ├── anomaly/              # point.py, contextual.py
-├── leakage/              # equivalence.py, correlation.py, temporal.py, asof.py
+├── leakage/              # equivalence.py, correlation.py, temporal.py, asof.py, combination.py
+├── panel.py              # group_col= entity partitioning, prevalence view (PNL001-004)
 ├── validity.py           # domain-constraint checks (bounds + relations)
 ├── remediate.py          # apply_fixes / fix engine, health score (repair on a copy)
 ├── adapters/             # boundary adapters (e.g. timesfm.py)
@@ -401,6 +402,8 @@ Run `pip install -e ".[dev,examples]"` for running all example notebooks easily.
 
 See [`examples/`](examples) (indexed in [`examples/README.md`](examples/README.md)):
 
+- `getting_started/`, the from-zero notebook covering the full scan → read → repair
+  workflow (see Quickstart above).
 - `ogdc_leakage_case/`, the flagship LEK001 case on real OGDC data (script + notebook).
 - `beyond_price_direction/`, validity (VAL001/VAL002) on real volume, RSI, and OHLC
   columns: concrete proof tsauditor audits more than price and direction.
@@ -410,6 +413,8 @@ See [`examples/`](examples) (indexed in [`examples/README.md`](examples/README.m
 - `new_features_walkthrough.ipynb`, LEK004, validity checks, `tsa.fix`, and the TimesFM
   adapter, end-to-end.
 - `validation_comparison/`, time-series validation vs general profiling.
+- `whats_new_0_4_0/`, everything added in 0.4.0: PRF007, PNL004, `fix()`'s
+  `available_at=`/`constraints=`, and the LEK002 threshold change.
 
 ## Testing
 
@@ -441,7 +446,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Contributors
 
-- [@LuisMend12](https://github.com/LuisMend12) — [#51](https://github.com/imann128/tsauditor/pull/51),
+- [@LuisMend12](https://github.com/LuisMend12): [#51](https://github.com/imann128/tsauditor/pull/51),
   fixing `GuardReport.to_dict()` silently omitting the `info` count from its totals
   ([#43](https://github.com/imann128/tsauditor/issues/43)).
 

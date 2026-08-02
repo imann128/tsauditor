@@ -4,6 +4,52 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added: `n_jobs` and `chunk_size` parallelize `group_col` scans
+
+- **`scan(df, group_col=..., n_jobs=-1)` now audits entities in parallel via
+  `joblib`, instead of a plain sequential loop.** Previously the only way to
+  get real parallel speedup on panel data was to bypass `group_col` entirely:
+  split the frame into separate per-entity DataFrames and drive
+  `Parallel(delayed(scan))` externally, exactly as the README's own scaling
+  section documents. That workaround got the speedup; the more ergonomic
+  single-call `group_col=` path did not, silently, since nothing about
+  `scan()`'s panel-mode branch used `joblib`, `concurrent.futures`, or any
+  other parallelism.
+
+  `n_jobs` defaults to `1` (sequential, matches prior behavior exactly, no
+  change for existing callers). Set `n_jobs=-1` to use all available cores.
+
+  **Dispatched in chunks, not one task per group.** Real panel data often
+  has many small entities (tens of rows each). Dispatching one `joblib` task
+  per group makes per-task overhead, pickling, worker dispatch, dominate for
+  datasets shaped like that, which can make naive one-task-per-group
+  parallelism net *slower* than sequential. `chunk_size` controls how many
+  groups are bundled per dispatched task; left at its default (`None`), it's
+  auto-sized from `len(groups)` and the actual worker count
+  (`joblib.cpu_count()` when `n_jobs=-1`) so each worker gets a handful of
+  tasks rather than exactly one.
+
+  **Correctness, not just speed, is the property being guarded.**
+  Parallelizing must never change *what* gets reported, only how long it
+  takes: `Parallel` preserves submission order (not completion order), and
+  the report is only mutated in the main process after every worker's
+  results come back, so issue order and content are identical to the
+  sequential path regardless of `n_jobs` or `chunk_size`. Verified directly:
+  the same panel scanned at `n_jobs=1, 2, -1` and a custom `chunk_size`
+  produces byte-identical issue lists (code, group, column, severity, and
+  order) in every case, and this is now a regression test, not just a
+  one-time check.
+
+### Internal
+
+- Panel-mode helper functions (`_audit_one_group`, `_audit_group_chunk`,
+  `_auto_chunk_size`) are module-level, not closures, so they pickle
+  correctly for `joblib`'s default `loky` backend, a nested function here
+  would fail to parallelize at all, silently, only surfacing as a runtime
+  error the first time someone actually passed `n_jobs != 1`.
+
 ## [0.4.0] - 2026-07-30
 
 ### Fixed: `audit_combination_leakage` was unreachable from `tsauditor.leakage`

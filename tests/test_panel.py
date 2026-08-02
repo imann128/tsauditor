@@ -11,6 +11,8 @@ Covers:
 - panel-aware repair, which stops one entity's values filling another's gaps
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -880,3 +882,134 @@ def test_pnl002_is_fast_enough_for_a_realistic_panel():
     start = time.time()
     audit_cross_sectional_leakage(panel, group_col="ticker", target="target")
     assert time.time() - start < 5.0
+
+
+# ── n_jobs parallelization ──────────────────────────────────────────────────
+# group_col scans previously ran every entity sequentially in-process, even
+# though the README's own documented workaround (separate frames + external
+# joblib) parallelizes the identical workload. n_jobs wires joblib into the
+# scan() call itself. The one property that matters most here: parallelizing
+# must never change *what* gets reported, only how long it takes.
+
+
+def _many_small_groups_panel(n_entities: int = 24) -> pd.DataFrame:
+    """Many short entities -- the shape that stresses per-task dispatch
+    overhead and is where a naive one-task-per-group split would be worst."""
+    parts = [
+        _entity(f"T{i}", n=15 + (i % 5), level=100 + i, seed=i)
+        for i in range(n_entities)
+    ]
+    return pd.concat(parts).sort_index()
+
+
+def _issue_signature(report):
+    """A comparable, order-preserving fingerprint of every issue in a report:
+    code, group, column, and severity. Enough to catch a parallel run
+    dropping, duplicating, or misattributing an issue, without depending on
+    evidence dict formatting."""
+    return [
+        (issue.code, issue.group, issue.column, issue.severity)
+        for issue in report.critical + report.warnings + report.info
+    ]
+
+
+@pytest.mark.parametrize(
+    "n_jobs, chunk_size",
+    [(2, None), (-1, None), (4, 3), (2, 1)],
+)
+def test_parallel_group_col_scan_matches_sequential(n_jobs, chunk_size):
+    """
+    The core correctness guarantee of n_jobs: results must be identical to
+    n_jobs=1 regardless of worker count or chunk size, not just 'plausible'.
+    Order matters too -- Parallel must preserve submission order, not
+    completion order, or two runs of the same scan would produce differently
+    ordered reports.
+    """
+    panel = _many_small_groups_panel()
+
+    sequential = tsa.scan(
+        panel, group_col="ticker", target="direction", run_stationarity=False
+    )
+    parallel = tsa.scan(
+        panel,
+        group_col="ticker",
+        target="direction",
+        run_stationarity=False,
+        n_jobs=n_jobs,
+        chunk_size=chunk_size,
+    )
+
+    assert _issue_signature(parallel) == _issue_signature(sequential)
+    assert len(_issue_signature(sequential)) > 0  # the comparison isn't vacuous
+
+
+def test_n_jobs_is_ignored_without_group_col():
+    """A non-panel scan has nothing to parallelize; n_jobs must not change
+    its result or raise, even if a caller passes n_jobs=-1 out of habit."""
+    dates = pd.date_range("2024-01-01", periods=100, freq="D")
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"price": 100 + np.cumsum(rng.normal(0, 1, 100))}, index=dates)
+
+    baseline = tsa.scan(df, run_stationarity=False)
+    with_njobs = tsa.scan(df, run_stationarity=False, n_jobs=-1)
+
+    assert _issue_signature(with_njobs) == _issue_signature(baseline)
+
+
+def test_auto_chunk_size_uses_real_cpu_count_not_a_hardcoded_guess(monkeypatch):
+    """
+    n_jobs=-1 must size chunks off the machine's actual core count via
+    joblib.cpu_count(), not a hardcoded guess -- a hardcoded fallback under-
+    chunks (too few, too-large chunks) on any machine with more cores than
+    the guess, silently leaving workers idle.
+    """
+    from tsauditor.scanner import _auto_chunk_size
+    import joblib
+
+    monkeypatch.setattr(joblib, "cpu_count", lambda: 32)
+    # target_n_chunks = 32 * 4 = 128; 3200 groups // 128 = 25
+    assert _auto_chunk_size(n_groups=3200, n_jobs=-1) == 25
+
+    monkeypatch.setattr(joblib, "cpu_count", lambda: 2)
+    # target_n_chunks = 2 * 4 = 8; 3200 groups // 8 = 400
+    assert _auto_chunk_size(n_groups=3200, n_jobs=-1) == 400
+
+
+def _tiny_panel(n_entities: int) -> pd.DataFrame:
+    """Minimal panel, just enough rows per entity to scan without crashing,
+    for exercising the many-groups warning without building a slow test."""
+    parts = [_entity(f"T{i}", n=10, level=100 + i, seed=i) for i in range(n_entities)]
+    return pd.concat(parts).sort_index()
+
+
+def test_warns_when_sequential_scan_has_many_groups():
+    """A default n_jobs=1 scan on a large panel should tell the caller
+    n_jobs=-1 exists, rather than they just wait and never find out."""
+    from tsauditor.scanner import _MANY_GROUPS_WARNING_THRESHOLD
+
+    panel = _tiny_panel(_MANY_GROUPS_WARNING_THRESHOLD + 1)
+
+    with pytest.warns(UserWarning, match="n_jobs=-1"):
+        tsa.scan(panel, group_col="ticker", run_stationarity=False)
+
+
+def test_no_warning_below_the_many_groups_threshold():
+    """A handful of groups is exactly the case where the warning would be
+    noise, not a signal -- sequential is already fine there."""
+    panel = _tiny_panel(5)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=UserWarning)
+        tsa.scan(panel, group_col="ticker", run_stationarity=False)
+
+
+def test_no_warning_when_already_parallelized():
+    """The warning exists to suggest n_jobs=-1; it must not fire once the
+    caller has already taken that suggestion."""
+    from tsauditor.scanner import _MANY_GROUPS_WARNING_THRESHOLD
+
+    panel = _tiny_panel(_MANY_GROUPS_WARNING_THRESHOLD + 1)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=UserWarning)
+        tsa.scan(panel, group_col="ticker", run_stationarity=False, n_jobs=2)

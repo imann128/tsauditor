@@ -7,12 +7,18 @@ assembles a GuardReport.
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional
 
 import pandas as pd
 
 from tsauditor.report.summary import GuardReport, Issue, CRITICAL, WARNING
 from tsauditor.utils.validation import validate_dataframe, infer_frequency
+
+# Rough heuristic, not a benchmarked cutoff: above this many groups, a
+# sequential group_col scan is slow enough that most callers would rather
+# know n_jobs=-1 exists than find out by waiting.
+_MANY_GROUPS_WARNING_THRESHOLD = 100
 
 
 def scan(
@@ -23,6 +29,8 @@ def scan(
     available_at: Optional[dict] = None,
     constraints: Optional[dict] = None,
     group_col: Optional[str] = None,
+    n_jobs: int = 1,
+    chunk_size: Optional[int] = None,
     # Fine-grained toggles — all enabled by default
     run_profiler: bool = True,
     run_anomaly: bool = True,
@@ -73,6 +81,22 @@ def scan(
         Panel-level structure checks (PNL001, PNL003) also run, and
         ``report.prevalence()`` summarises how widely each finding occurs across
         entities.
+    n_jobs : int
+        Number of parallel workers used to audit groups when ``group_col`` is
+        given. Default ``1`` (sequential, matches prior behaviour exactly).
+        Set to ``-1`` to use all available cores. Ignored when ``group_col`` is
+        None, a single (non-panel) scan is always run in-process.
+        Parallelism is dispatched in chunks (see ``chunk_size``), not one task
+        per group, because per-task overhead (pickling, worker dispatch) can
+        dominate for datasets with many small groups, a real, measured
+        failure mode with short per-entity series (tens of rows), not a
+        hypothetical one.
+    chunk_size : Optional[int]
+        Number of groups audited per dispatched parallel task. Default None,
+        which auto-selects a chunk size from ``len(groups)`` and the actual
+        worker count (``joblib.cpu_count()`` when ``n_jobs=-1``) so each
+        worker gets a handful of tasks rather than one group each. Only
+        relevant when ``n_jobs != 1`` and ``group_col`` is given.
     run_profiler : bool
         Run structural profiling checks. Default True.
     run_anomaly : bool
@@ -96,6 +120,8 @@ def scan(
     >>> report = tsa.scan(df, target="Direction", domain="finance")  # doctest: +SKIP
     >>> report.summary()  # doctest: +SKIP
     >>> report.to_json("report.json")  # doctest: +SKIP
+    >>> # Panel data, parallelized across all cores:
+    >>> report = tsa.scan(df, group_col="ticker", domain="finance", n_jobs=-1)  # doctest: +SKIP
     """
     # ── Validate domain argument ──────────────────────────────────────────────
     valid_domains = {"finance", "sensor", None}
@@ -155,6 +181,7 @@ def scan(
 
     metadata["group_col"] = group_col
     metadata["n_groups"] = len(groups)
+    metadata["n_jobs"] = n_jobs
     # frequency was inferred from the interleaved index, which is meaningless
     # for a panel; re-infer it from a single entity instead.
     if groups:
@@ -172,13 +199,80 @@ def scan(
         ):
             _append_issue(report, issue)
 
-    for key, sub in groups:
-        sub = sub.drop(columns=[group_col])
-        for issue in _run_checks(sub, options):
-            issue.group = str(key)
-            _append_issue(report, issue)
+    # ── Per-entity checks: sequential (n_jobs=1, default) or parallel ───────
+    if n_jobs == 1:
+        if len(groups) > _MANY_GROUPS_WARNING_THRESHOLD:
+            warnings.warn(
+                f"Scanning {len(groups)} groups sequentially (n_jobs=1, the "
+                f"default). For a panel this large, pass n_jobs=-1 to audit "
+                f"entities in parallel across all available cores. "
+                f"({_MANY_GROUPS_WARNING_THRESHOLD} groups is a rough "
+                f"heuristic, not a hard cutoff, most machines will see a "
+                f"real speedup well before that point.)",
+                UserWarning,
+                stacklevel=2,
+            )
+        for key, sub in groups:
+            for issue in _audit_one_group(key, sub, group_col, options):
+                _append_issue(report, issue)
+    else:
+        from joblib import Parallel, delayed
+
+        effective_chunk_size = chunk_size or _auto_chunk_size(len(groups), n_jobs)
+        chunks = [
+            groups[i : i + effective_chunk_size]
+            for i in range(0, len(groups), effective_chunk_size)
+        ]
+        chunk_results = Parallel(n_jobs=n_jobs)(
+            delayed(_audit_group_chunk)(chunk, group_col, options) for chunk in chunks
+        )
+        for chunk_issues in chunk_results:
+            for issue in chunk_issues:
+                _append_issue(report, issue)
 
     return report
+
+
+def _auto_chunk_size(n_groups: int, n_jobs: int) -> int:
+    """
+    Pick a chunk size so each worker gets a handful of dispatched tasks
+    rather than exactly one, amortizes per-task overhead (pickling, worker
+    dispatch) which otherwise dominates for datasets with many small groups.
+    """
+    if n_jobs > 0:
+        effective_jobs = n_jobs
+    else:
+        # n_jobs=-1 (or any other negative joblib convention): resolve to the
+        # actual worker count joblib itself would use, not a guess.
+        from joblib import cpu_count
+
+        effective_jobs = cpu_count()
+    # aim for ~4 chunks per worker
+    target_n_chunks = max(effective_jobs * 4, 1)
+    return max(1, n_groups // target_n_chunks)
+
+
+def _audit_one_group(
+    key, sub: pd.DataFrame, group_col: str, options: "_ScanOptions"
+) -> list:
+    """Audit a single entity's partition, tagging every resulting Issue with
+    its group key. Pure function of its arguments, safe to call from a
+    worker process."""
+    sub = sub.drop(columns=[group_col])
+    issues = list(_run_checks(sub, options))
+    for issue in issues:
+        issue.group = str(key)
+    return issues
+
+
+def _audit_group_chunk(chunk, group_col: str, options: "_ScanOptions") -> list:
+    """Audit several groups within one dispatched task, this is the unit
+    that actually gets sent to a joblib worker, not a single group, to keep
+    per-task overhead from dominating on many-small-groups panels."""
+    all_issues = []
+    for key, sub in chunk:
+        all_issues.extend(_audit_one_group(key, sub, group_col, options))
+    return all_issues
 
 
 class _ScanOptions:

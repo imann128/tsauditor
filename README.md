@@ -444,12 +444,6 @@ ruff format --check .
 All three must pass; CI verifies them across Python 3.9–3.14 on Linux, Windows and macOS.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Contributors
-
-- [@LuisMend12](https://github.com/LuisMend12): [#51](https://github.com/imann128/tsauditor/pull/51),
-  fixing `GuardReport.to_dict()` silently omitting the `info` count from its totals
-  ([#43](https://github.com/imann128/tsauditor/issues/43)).
-
 ## Questions, tutorials, and usage help
 
 Confused about how to use `tsauditor`, how a particular check applies to your data, want

@@ -31,6 +31,7 @@ dependencies = [
     "scipy>=1.9,<2",
     "statsmodels>=0.13,<1",
     "rich>=13.0,<16",
+    "joblib>=1.2",
 ]
 
 [project.urls]
@@ -55,7 +56,6 @@ dev = [
     "matplotlib>=3.5,<4",
     "polars>=0.20",
     "pyarrow>=12",
-    "joblib>=1.2",
 ]
 examples = [
     "scikit-learn>=1.0",

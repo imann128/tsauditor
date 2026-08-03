@@ -105,10 +105,11 @@ def audit_equivalence(
         List[Issue]
              One LEK001 Issue per flagged feature column.
 
-    Examples
-        -------
+        Examples
+        --------
         A feature that is really just the target's sign - clear separation
         between the two classes:
+
         >>> import pandas as pd
         >>> target = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0] *4
         >>> feature_leaky = [8, 2, 7, 1, 9, 3, 8, 2, 7, 1] *4

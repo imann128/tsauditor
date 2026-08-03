@@ -118,18 +118,26 @@ def audit_missing(
     domain: str = None,
 ) -> list:
     """
-    Audits individual columns for systematic missing value clusters and high missing rates.
+    Audit individual columns for systematic missing value clusters and high
+    missing rates (PRF002, PRF005, PRF006).
 
-    Parameters:
-        df (pd.DataFrame): Time-series DataFrame with a DatetimeIndex.
-        cluster_threshold (int): Minimum consecutive NaNs to count as a cluster.
-                                 If None, derived automatically from domain.
-        missing_rate_threshold (float): Proportion threshold (0.0 to 1.0) above which
-                                        a column is flagged for high missingness.
-        domain (str): Domain context ('finance', 'sensor', or None).
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Time-series DataFrame with a DatetimeIndex.
+    cluster_threshold : int, optional
+        Minimum consecutive NaNs to count as a cluster. If None, derived
+        automatically from domain.
+    missing_rate_threshold : float, default 0.30
+        Proportion threshold (0.0 to 1.0) above which a column is flagged
+        for high missingness.
+    domain : str, optional
+        Domain context ('finance', 'sensor', or None).
 
-    Returns:
-        list: List of Issue objects describing missing value anomalies.
+    Returns
+    -------
+    list
+        List of Issue objects describing missing value anomalies.
     """
     issues = []
 

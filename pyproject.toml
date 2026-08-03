@@ -64,6 +64,10 @@ examples = [
     "nbclient>=0.7",
     "nbformat>=5",
 ]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

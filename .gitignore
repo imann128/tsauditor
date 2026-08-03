@@ -37,3 +37,6 @@ report.json
 # Local-only files (never present in this repo, but listed defensively)
 .pypirc
 extracted_check/
+
+# Sphinx build output (generated; the source lives in sphinx-docs/source)
+sphinx-docs/build/

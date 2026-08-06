@@ -18,7 +18,7 @@ your DataFrame
       ├─────────────── group_col given? ───────────────┐
       │ no                                          yes│
       ▼                                                ▼
-  run the checks once                    2a. panel structure  PNL001, PNL003, PNL004
+  run the checks once                    2a. panel structure  PNL001, PNL003
   on the whole frame                     2b. cross-sectional  PNL002
       │                                                │
       │                                  2c. for each entity: run the same
@@ -27,7 +27,7 @@ your DataFrame
       │                                                │
       ├────────────────────┬───────────────────────────┘
       ▼
-3. profiler   (if run_profiler)     PRF001–PRF007
+3. profiler   (if run_profiler)     PRF001–PRF006
       │
       ▼
 4. anomaly    (if run_anomaly)      ANO001–ANO003
@@ -45,7 +45,7 @@ your DataFrame
    GuardReport
 ```
 
-Each stage appends `Issue` objects to the report. Issues are routed into `critical`, `warnings`, or `info` by their severity, the stage they came from does not decide where they land.
+Each stage appends `Issue` objects to the report. Issues are routed into `critical`, `warnings`, or `info` by their severity; the stage they came from does not decide where they land.
 
 **The panel branch is the whole of panel support.** Stages 3–7 are identical either way; they simply run once per entity instead of once. No detector knows what a panel is, which is why panel and single-series results stay consistent by construction. → [Panel Data](Panel-Data)
 
@@ -68,7 +68,7 @@ Before any check runs, `validate_dataframe()` puts your input into a known-good 
 3. If the index is **numeric**, `tsauditor` **refuses** and raises an error.
 4. Otherwise (string or object labels), it attempts one coercion to datetime, and raises a clear error if that fails.
 
-Step 3 deserves explanation, because refusing to do something looks unhelpful. `pd.to_datetime([0, 1, 2])` succeeds, it interprets those integers as nanoseconds since the epoch and returns three timestamps a few nanoseconds apart in 1970. Every gap, frequency, and clustering result computed on that index would be nonsense, and nothing would visibly fail. Refusing a numeric index is the safer behaviour.
+Step 3 deserves explanation, because refusing to do something looks unhelpful. `pd.to_datetime([0, 1, 2])` succeeds: it interprets those integers as nanoseconds since the epoch and returns three timestamps a few nanoseconds apart in 1970. Every gap, frequency, and clustering result computed on that index would be nonsense, and nothing would visibly fail. Refusing a numeric index is the safer behaviour.
 
 **Sort.** The frame is sorted ascending by the time index. Every downstream check assumes chronological order.
 
@@ -104,7 +104,8 @@ The metadata is not decoration. `apply_fixes` later reads `metadata["domain"]` t
 
 ---
 
-## Stage 3: Profiler: is the data structurally sound?
+## Stage 3: Profiler (is the data structurally sound?)
+
 The profiler asks questions about the *shape* of your data, mostly ignoring the values themselves.
 
 | Check | Code | Question it asks |
@@ -112,9 +113,8 @@ The profiler asks questions about the *shape* of your data, mostly ignoring the 
 | `audit_frequency` | PRF001, PRF004, PRF005 | Are timestamps unique, evenly spaced, and gap-free? |
 | `audit_stationarity` | PRF003 | Does this column have a stable mean over time? |
 | `audit_missing` | PRF002, PRF006 | Are values missing, and are they missing in clumps? |
-| `audit_non_finite` | PRF007 | Are there infinities? Neither missing nor an outlier, and invisible to both. |
 
-`audit_frequency` runs first because a duplicate timestamp invalidates everything downstream, it silently corrupts rolling windows, lags, and resampling. It is the only profiler check rated CRITICAL.
+`audit_frequency` runs first because a duplicate timestamp invalidates everything downstream: it silently corrupts rolling windows, lags, and resampling. It is the only profiler check rated CRITICAL.
 
 `audit_stationarity` is by far the most expensive check in the entire library: the Augmented Dickey-Fuller test fits many regressions per column, searching lags by AIC. Skip it with `run_stationarity=False` when you do not need it.
 
@@ -122,7 +122,8 @@ The profiler asks questions about the *shape* of your data, mostly ignoring the 
 
 ---
 
-## Stage 4: Anomaly: are individual values plausible?
+## Stage 4: Anomaly (are individual values plausible?)
+
 | Check | Code | Question it asks |
 | ----- | ---- | ---------------- |
 | `audit_point_anomalies` | ANO002 | Is this value extreme compared to the **whole column**? |
@@ -137,7 +138,8 @@ They catch different things. In a series that ramps steadily from 0 to 240, a va
 
 ---
 
-## Stage 5: Leakage: does a feature know the future?
+## Stage 5: Leakage (does a feature know the future?)
+
 This is the reason the library exists. All four checks in this stage need `target=`; without it the stage is silently skipped.
 
 | Check | Code | Question it asks |
@@ -147,9 +149,9 @@ This is the reason the library exists. All four checks in this stage need `targe
 | `audit_temporal_leakage` | LEK003 | Does it know the future better than **persistence alone** allows? |
 | `audit_combination_leakage` | LEK005 | Do **several features together** rebuild the target, when none does alone? |
 
-LEK001 and LEK005 are CRITICAL, a feature reproducing the target at AUC 1.0, or a pair reconstructing it at adjusted R² 1.0, is not a judgement call. LEK002 and LEK003 are WARNING-level *suspicion* flags: a genuinely strong predictor and a lookahead leak can produce the same signature, and the honest separator is magnitude, not kind.
+LEK001 and LEK005 are CRITICAL: a feature reproducing the target at AUC 1.0, or a pair reconstructing it at adjusted R² 1.0, is not a judgement call. LEK002 and LEK003 are WARNING-level *suspicion* flags: a genuinely strong predictor and a lookahead leak can produce the same signature, and the honest separator is magnitude, not kind.
 
-LEK005 is the only check here that is **not** univariate. Everything else scores one feature at a time, which is precisely why a target defined as `x1 - x2` slips past all of them, each input correlates with it at only ~0.7.
+LEK005 is the only check here that is **not** univariate. Everything else scores one feature at a time, which is precisely why a target defined as `x1 - x2` slips past all of them: each input correlates with it at only ~0.7.
 
 → Full details: [Leakage Detectors](Detectors-Leakage)
 
@@ -173,7 +175,6 @@ Three checks exist only for multi-entity data, and they look at the panel *as a 
 | ----- | ---- | ---------------- |
 | `audit_panel_structure` | PNL001 | Do all entities share a **common time index**? |
 | `audit_panel_structure` | PNL003 | Is any entity **too short** to audit meaningfully? |
-| `audit_panel_structure` | PNL004 | Do any rows have a **null entity id**, and so receive no checks at all? |
 | `audit_cross_sectional_leakage` | PNL002 | Does a feature rank entities in the order their **future** targets will fall? |
 
 PNL002 needs `target=` as well as `group_col=`. It exists because the per-entity checks degrade badly when a common market factor dominates: LEK002's detection of the same leak falls from 100% of entities to 22.5%, while the cross-sectional signal is unaffected.
@@ -188,12 +189,14 @@ VAL001 and VAL002 run only when you pass `constraints=`.
 
 Where the anomaly module finds values that are *statistically surprising*, this stage finds values that are *definitionally impossible*: a negative traded volume, a sentiment score outside [-1, 1], a bid above the ask. `tsauditor` has no way to know that a column named `sentiment` is bounded, so you declare the rule and it enforces it.
 
-A convenience: if you pass a flat mapping with no `"bounds"` or `"relations"` key, it is treated as `bounds`.
+A convenience: pass a flat mapping and it is treated as `bounds`. The flat and nested forms are told apart by *shape*, not by whether the dict happens to contain keys named `"bounds"` or `"relations"`, so a column literally named either of those is still handled correctly.
 
 ```python
 constraints={"spread": {"min": 0}}                    # treated as bounds
 constraints={"bounds": {"spread": {"min": 0}}}        # identical, explicit
 ```
+
+→ Full details on the disambiguation rule: [Validity Detectors](Detectors-Validity#the-flat-shorthand)
 
 → Full details: [Validity Detectors](Detectors-Validity)
 
@@ -228,6 +231,6 @@ report.to_dict()
 
 **Nothing is ever mutated.** `scan()` copies at validation. `apply_fixes()` returns a new frame. `fix()` returns a new frame. There is no code path in `tsauditor` that writes to the DataFrame you passed in.
 
-**Panel repair partitions first.** When the report came from a `group_col=` scan, `apply_fixes()` repairs each entity separately and writes back by position. Repairing an interleaved panel as one series carries values across entity boundaries, measured, a gap in a series near 10 was filled with ~1000 from the other entity.
+**Panel repair partitions first.** When the report came from a `group_col=` scan, `apply_fixes()` repairs each entity separately and writes back by position. Repairing an interleaved panel as one series carries values across entity boundaries: measured, a gap in a series near 10 was filled with ~1000 from the other entity.
 
-**Detectors and repairs share formulas.** `remediate.py` recomputes the outlier, spike, and stuck masks in order to repair them. Those formulas are duplicated from the detector modules, which is a real risk, if one changed and the other did not, `apply_fixes` would repair cells the report never flagged. The test suite pins them together: `tests/test_fix.py` asserts the repaired cell count matches the detector's own evidence. Keep that test passing if you touch either side.
+**Detectors and repairs share formulas — literally, not just by convention.** `remediate.py` recomputes the outlier, spike, and stuck masks in order to repair them, but it imports every threshold preset and masking function directly from `tsauditor/anomaly/_common.py` rather than keeping its own copy — the same function objects the detectors themselves call. This used to be a set of hand-duplicated formulas connected only by a comment, which drifted out of sync at least once in practice (the ANO001 single-row-gap bridge was added to the detector without a matching update to remediate's own copy). `tests/test_fix.py::test_detector_and_repair_share_the_same_threshold_and_mask_functions` asserts identity (`remediate.stuck_run_mask is anomaly_common.stuck_run_mask`, not just matching output) — drift is now structurally impossible, not merely tested for.

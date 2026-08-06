@@ -82,6 +82,23 @@ def test_missing_column_raises():
         to_timesfm(df, "nope")
 
 
+def test_non_numeric_target_col_raises_clearly():
+    """
+    Regression. A non-numeric target_col used to fail much later and much
+    less clearly: remediate.py's own numeric-dtype guards silently pass a
+    string/categorical column through unrepaired, and
+    `clean[target_col].to_numpy(dtype=np.float32)` then raised a raw
+    `ValueError: could not convert string to float: '...'` with no mention
+    of target_col or what to do about it -- inconsistent with the adapter's
+    own stated design (raise clearly rather than let something unusable
+    reach the model silently, which is exactly what the finite-value guard
+    already does for NaNs).
+    """
+    df = pd.DataFrame({"y": ["a", "b", "c"] * 20}, index=_idx(60))
+    with pytest.raises(TypeError, match="not numeric"):
+        to_timesfm(df, "y")
+
+
 def test_accessible_via_top_level_namespace():
     import tsauditor as tsa
 

@@ -2,6 +2,24 @@ import pytest
 import pandas as pd
 from tsauditor.profiler.frequency import audit_frequency
 from tsauditor.report.summary import CRITICAL, WARNING
+import tsauditor.profiler.frequency as frequency
+import tsauditor.profiler.missing as missing
+import tsauditor.profiler._common as profiler_common
+
+
+def test_frequency_and_missing_share_the_same_rle_function():
+    """
+    Structural guarantee: audit_frequency (PRF001/PRF005) and audit_missing
+    (PRF002) must compute run lengths through the exact same function object
+    in tsauditor.profiler._common, not independent copies of the same
+    three-line numpy pattern. Mirrors
+    test_detector_and_repair_share_the_same_threshold_and_mask_functions in
+    tests/test_fix.py for the anomaly/remediate module -- same category of
+    duplication, same fix. If this ever fails, someone has reintroduced a
+    hand-copied run-length-encoding block instead of importing from _common.
+    """
+    assert frequency.consecutive_run_lengths is profiler_common.consecutive_run_lengths
+    assert missing.consecutive_run_lengths is profiler_common.consecutive_run_lengths
 
 
 def test_clean_financial_df_no_issues(clean_financial_df):

@@ -68,6 +68,94 @@ def test_to_json_includes_health_block(tmp_path):
     assert "leaky_columns" in data
 
 
+# ── Panel awareness (full-sweep finding) ───────────────────────────────────
+#
+# affected_cells()/health_score() used to recompute every mask directly on
+# the raw, interleaved panel `df`, with no idea `group_col` existed --
+# unlike detection (scanner.py) and apply_fixes (_apply_fixes_by_group),
+# both of which are correctly per-entity. A real outlier in a small-scale
+# entity mixed into a global mean/std dominated by a much larger-scale
+# entity can be diluted below detection and silently vanish from the score.
+
+
+def test_health_score_finds_a_per_entity_outlier_invisible_globally():
+    """
+    Regression. AAA's own distribution is ~10; its outlier at 30 is a
+    dramatic per-entity anomaly (correctly flagged by scan(group_col=...)).
+    But mixed into the interleaved panel with BBB's ~1000-scale values, a
+    global z-score/IQR recomputation never sees it -- affected_cells() used
+    to return 0 and health_score() 100.0 even though a real, reported
+    ANO002 finding for AAA was never repaired.
+    """
+    import tsauditor as tsa
+
+    n = 120
+    dates = _idx(n)
+    rng = np.random.default_rng(0)
+    aaa = rng.normal(10, 1, n)
+    aaa[20] = 30.0
+    bbb = rng.normal(1000, 100, n)
+    panel = pd.concat(
+        [
+            pd.DataFrame({"ticker": "AAA", "price": aaa}, index=dates),
+            pd.DataFrame({"ticker": "BBB", "price": bbb}, index=dates),
+        ]
+    ).sort_index()
+
+    report = tsa.scan(
+        panel, group_col="ticker", run_leakage=False, run_stationarity=False
+    )
+    assert any(i.code == "ANO002" and i.group == "AAA" for i in report.all_issues)
+
+    # Deliberately leave the outlier unrepaired.
+    fixed = report.apply_fixes(panel, outliers=None, missing="interpolate", stuck=None)
+    # AAA and BBB share the same date index, so filter by ticker too before
+    # indexing by date to avoid an ambiguous duplicate-label lookup.
+    assert (
+        fixed.loc[
+            (fixed["ticker"] == "AAA") & (fixed.index == dates[20]), "price"
+        ].iloc[0]
+        == 30.0
+    )
+
+    assert report.health_score(fixed) < 100.0
+
+
+def test_to_json_score_after_is_panel_aware(tmp_path):
+    """
+    Regression. to_json's internal `score_after` re-scan omitted
+    group_col=, unlike GuardReport.health_score()'s own re-scan -- so the
+    two disagreed for panel data. Both must reflect the same, correct,
+    per-entity result.
+    """
+    import tsauditor as tsa
+
+    n = 120
+    dates = _idx(n)
+    rng = np.random.default_rng(0)
+    aaa = rng.normal(10, 1, n)
+    aaa[20] = 30.0
+    bbb = rng.normal(1000, 100, n)
+    panel = pd.concat(
+        [
+            pd.DataFrame({"ticker": "AAA", "price": aaa}, index=dates),
+            pd.DataFrame({"ticker": "BBB", "price": bbb}, index=dates),
+        ]
+    ).sort_index()
+
+    report = tsa.scan(
+        panel, group_col="ticker", run_leakage=False, run_stationarity=False
+    )
+    fixed = report.apply_fixes(panel, outliers=None, missing="interpolate", stuck=None)
+
+    p = tmp_path / "panel_health.json"
+    report.to_json(str(p), df=panel, fixed_df=fixed)
+    data = json.loads(p.read_text())
+
+    assert data["health"]["score_after"] == report.health_score(fixed)
+    assert data["health"]["score_after"] < 100.0
+
+
 def test_to_json_backward_compatible_without_df(tmp_path):
     rep = GuardReport(warnings=[Issue("leakage", "LEK001", CRITICAL, "eq", "x")])
     p = tmp_path / "r.json"

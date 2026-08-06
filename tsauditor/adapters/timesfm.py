@@ -81,6 +81,10 @@ def to_timesfm(
     ------
     KeyError
         If ``target_col`` is not in ``df``.
+    TypeError
+        If ``target_col`` is not numeric (a categorical or string column, for
+        example). Raised here rather than surfacing as a raw ``ValueError``
+        from the numpy conversion further down.
     ValueError
         If the repaired series still contains non-finite values, or has fewer
         than ``min_context`` points.
@@ -89,6 +93,23 @@ def to_timesfm(
 
     if target_col not in df.columns:
         raise KeyError(f"target_col '{target_col}' not found in DataFrame columns.")
+
+    if not pd.api.types.is_numeric_dtype(df[target_col]):
+        # Without this, a non-numeric target_col (a categorical, a string
+        # column, anything remediate.py's own numeric-dtype guards silently
+        # pass through unrepaired) fails much later and much less clearly:
+        # `clean[target_col].to_numpy(dtype=np.float32)` below raises a raw
+        # `ValueError: could not convert string to float: '...'` with no
+        # mention of target_col or what the caller needs to fix. The finite
+        # check further down exists for exactly this reason -- to raise
+        # clearly rather than let a bad value reach the model silently --
+        # and a non-numeric column deserves the same treatment, not a
+        # generic numpy conversion error.
+        raise TypeError(
+            f"target_col '{target_col}' has dtype {df[target_col].dtype}, not "
+            f"numeric. TimesFM forecasts a numeric series; encode or select a "
+            f"numeric column before calling to_timesfm()."
+        )
 
     # target_col is the series to forecast, so it is cleaned as an ordinary
     # column here (not protected the way fix() protects a label).

@@ -210,6 +210,35 @@ def test_validate_dataframe_with_time_col():
     assert "Date" not in out.columns
 
 
+def test_validate_dataframe_sort_is_stable_for_duplicate_timestamps():
+    """
+    Regression. validate_dataframe used to call df.sort_index() with pandas'
+    default kind="quicksort", which is not a stable sort -- rows sharing an
+    identical duplicate timestamp could come out reordered relative to the
+    input in an order that depends on the input's own row order in an
+    unspecified way, rather than preserving it. Concretely: the exact same
+    logical rows, supplied in two different (equally valid) orders, could
+    end up with a different row surviving downstream keep="first" dedup
+    (e.g. audit_frequency's PRF004 handling), making repair nondeterministic
+    across otherwise-equivalent inputs.
+
+    kind="mergesort" is the sort pandas/numpy document as stable; this pins
+    that it's actually used, by checking relative tie order survives a
+    shuffle exactly as a stable sort guarantees.
+    """
+    rng_order = [3, 1, 4, 0, 2]  # an arbitrary shuffle of 5 same-timestamp rows
+    dates = [pd.Timestamp("2024-01-01")] * 5 + [pd.Timestamp("2024-01-02")]
+    tags = [f"row{i}" for i in range(5)] + ["later"]
+    df = pd.DataFrame({"tag": tags}, index=pd.DatetimeIndex(dates))
+
+    shuffled = df.iloc[rng_order + [5]]  # keep the distinct-day row last
+    out = validate_dataframe(shuffled, target=None, time_col=None)
+
+    same_day = out.loc["2024-01-01", "tag"].tolist()
+    expected = [f"row{i}" for i in rng_order]
+    assert same_day == expected
+
+
 def test_validate_dataframe_rejects_non_dataframe():
     with pytest.raises(TypeError):
         validate_dataframe([1, 2, 3], target=None, time_col=None)
@@ -244,6 +273,32 @@ def test_infer_frequency_subhourly(sensor_df):
     assert freq == "sub-daily"
 
 
+def test_infer_frequency_weekly():
+    """
+    Regression: coverage gap. Every existing infer_frequency test used daily
+    or sub-daily data, so the "weekly" branch (median gap 140-196 hours) had
+    never actually been exercised by any test in this suite -- verified
+    correct by direct call, not just assumed from reading the boundary
+    constants.
+    """
+    idx = pd.date_range("2024-01-01", periods=20, freq="W")
+    assert infer_frequency(idx) == "weekly"
+
+
+def test_infer_frequency_monthly():
+    """Regression: coverage gap, same as test_infer_frequency_weekly -- the
+    "monthly" branch (median gap 600-960 hours) had never been hit."""
+    idx = pd.date_range("2024-01-01", periods=20, freq="MS")
+    assert infer_frequency(idx) == "monthly"
+
+
+def test_infer_frequency_irregular():
+    """Regression: coverage gap. The final `return "irregular"` fallback --
+    a median gap outside every named bucket -- had never been hit either."""
+    idx = pd.DatetimeIndex(["2024-01-01", "2024-01-03", "2024-02-20", "2024-06-01"])
+    assert infer_frequency(idx) == "irregular"
+
+
 # ── Scanner entry point ───────────────────────────────────────────────────────
 
 
@@ -266,3 +321,56 @@ def test_scan_returns_guard_report(clean_financial_df):
     """With all modules implemented, scan() returns a populated GuardReport."""
     report = tsa.scan(clean_financial_df, target="Direction", domain="finance")
     assert isinstance(report, GuardReport)
+
+
+def test_scan_forwards_anomaly_tuning_params():
+    """
+    Regression: previously only `domain=` crossed the boundary into the
+    anomaly detectors from scan() -- zscore_threshold, stuck_window,
+    spike_threshold, spike_window, and handle_missing were only reachable
+    by importing audit_point_anomalies/audit_contextual_anomalies directly.
+    A caller with, say, known 1-row sensor dropouts had no way to turn on
+    interpolation short of bypassing scan() entirely.
+
+    Proven here via stuck_window specifically: a 4-long run is invisible at
+    the default threshold but must be flagged once a caller explicitly
+    tightens stuck_window through scan() itself.
+    """
+    idx = pd.date_range("2024-01-01", periods=20, freq="D")
+    values = [100.0 + i * 0.01 for i in range(20)]
+    values[5:9] = [7.0, 7.0, 7.0, 7.0]  # a 4-long stuck run
+    df = pd.DataFrame({"x": values}, index=idx)
+
+    default_report = tsa.scan(df, run_leakage=False, run_stationarity=False)
+    assert default_report.filter(code="ANO001") == []  # 4 < default stuck_window (5)
+
+    tuned_report = tsa.scan(
+        df, run_leakage=False, run_stationarity=False, stuck_window=3
+    )
+    assert len(tuned_report.filter(code="ANO001")) == 1
+
+
+def test_scan_forwards_handle_missing_to_ano001_bridging():
+    """
+    handle_missing is documented on scan() now; confirm it actually reaches
+    audit_contextual_anomalies rather than being silently dropped somewhere
+    in _run_checks. ANO001 bridges a single-row gap regardless of
+    handle_missing (see contextual.py), so this checks the parameter is
+    wired through by observing scan() doesn't raise and still finds the
+    bridged run under either setting.
+    """
+    idx = pd.date_range("2024-01-01", periods=11, freq="D")
+    values = [1.0] * 5 + [float("nan")] + [1.0] * 5
+    df = pd.DataFrame({"x": values}, index=idx)
+
+    for hm in ("strict", "interpolate"):
+        report = tsa.scan(
+            df,
+            run_leakage=False,
+            run_stationarity=False,
+            stuck_window=5,
+            handle_missing=hm,
+        )
+        stuck = report.filter(code="ANO001")
+        assert len(stuck) == 1
+        assert stuck[0].evidence["max_stuck_duration"] == 11

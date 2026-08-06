@@ -6,7 +6,7 @@ Structural time-series profiling.
 Modules
 -------
 frequency   Timestamp regularity, gap detection, duplicate timestamps.
-stationarity ADF/KPSS stationarity tests per numeric column.
+stationarity ADF (Augmented Dickey-Fuller) stationarity test per numeric column.
 missing     Temporal missing value pattern analysis (clustered vs random),
             and non-finite (inf) value detection.
 """

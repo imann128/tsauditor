@@ -55,6 +55,20 @@ def _availability(
                 f"DataFrame's DatetimeIndex (all timestamps came out empty after "
                 f"alignment). Index it by df.index."
             )
+        # A tz-aware index compared against tz-naive availability (or vice
+        # versa) raises a raw pandas TypeError deep inside `avail > idx` —
+        # a confusing failure for what is usually a mundane mistake (the
+        # index was tz_localize'd, the release-date metadata came from
+        # somewhere that wasn't). Catch it here with a message that names
+        # the actual mismatch instead.
+        if index.tz != avail.dt.tz:
+            raise ValueError(
+                f"available_at['{col}'] timezone mismatch: the DataFrame index is "
+                f"{'tz-aware (' + str(index.tz) + ')' if index.tz else 'tz-naive'}, "
+                f"but the availability Series is "
+                f"{'tz-aware (' + str(avail.dt.tz) + ')' if avail.dt.tz else 'tz-naive'}. "
+                f"Localize or drop the timezone on one so both match before calling."
+            )
         return avail
     raise ValueError(
         f"available_at['{col}'] must be a pandas Series (per-row publish "
@@ -94,6 +108,17 @@ def audit_asof_leakage(
     -------
     List[Issue]
         Zero or more LEK004 Issues (CRITICAL).
+
+    Raises
+    ------
+    ValueError
+        If ``df`` lacks a ``DatetimeIndex``; if a column named in
+        ``available_at`` is not in ``df``; if a ``Series`` spec does not
+        align with ``df.index`` at all; or if a ``Series`` spec's timezone
+        awareness does not match ``df.index``'s (one tz-aware, the other
+        tz-naive). The timezone case raises here with a message naming the
+        actual mismatch, rather than as a raw ``TypeError`` from deep inside
+        the ``avail > idx`` comparison.
 
     Notes
     -----

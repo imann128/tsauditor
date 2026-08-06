@@ -25,5 +25,5 @@ from tsauditor.remediate import fix
 from tsauditor.report.summary import GuardReport, Issue
 from tsauditor import adapters
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = ["scan", "fix", "adapters", "GuardReport", "Issue"]

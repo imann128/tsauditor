@@ -120,6 +120,79 @@ def test_group_col_partitions_and_tags_issues(panel):
             assert issue.group in TICKERS
 
 
+def test_scan_threads_the_full_entity_list_into_metadata():
+    """
+    scan(group_col=...) must record every entity it partitioned, in
+    metadata["groups"], before any check runs -- that's the only source
+    GuardReport.groups() has for entities that end up with zero issues.
+    """
+    rng = np.random.default_rng(3)
+    n = 100
+    clean = pd.DataFrame(
+        {
+            "ticker": "CLEAN",
+            "feature": rng.normal(0, 1, n),
+            "target": rng.normal(0, 1, n),
+        },
+        index=DATES[:n],
+    )
+    leaky = pd.DataFrame(
+        {
+            "ticker": "LEAKY",
+            "feature": rng.normal(0, 1, n),
+            "target": rng.normal(0, 1, n),
+        },
+        index=DATES[:n],
+    )
+    leaky["target"] = leaky["feature"]  # LEK001: feature is the target itself
+
+    combined = pd.concat([clean, leaky]).sort_index()
+
+    report = tsa.scan(
+        combined,
+        target="target",
+        group_col="ticker",
+        run_profiler=False,
+        run_anomaly=False,
+        run_stationarity=False,
+    )
+
+    assert report.metadata["groups"] == ["CLEAN", "LEAKY"]
+    assert report.groups_affected(code="LEK001") == ["LEAKY"]
+
+
+def test_groups_lists_entities_with_zero_issues():
+    """
+    groups() must include a cleanly-scanned entity, not just ones that
+    appear on an Issue. Its docstring says "every entity scanned"; before
+    metadata["groups"] threaded the full partition list through, the body
+    only ever collected entities that appeared on an Issue, silently
+    dropping clean ones.
+
+    Built directly from GuardReport rather than a real scan: a genuinely
+    clean entity would need to survive every leakage check on random data
+    with certainty, and a spurious flag on finite samples (LEK002/LEK003 are
+    correlation-threshold checks) would mask the very regression this test
+    exists to catch.
+    """
+    from tsauditor.report.summary import GuardReport, Issue
+
+    leaky_issue = Issue(
+        module="leakage",
+        code="LEK001",
+        severity="critical",
+        description="feature is the target",
+        column="feature",
+        group="LEAKY",
+    )
+    report = GuardReport(
+        critical=[leaky_issue],
+        metadata={"group_col": "ticker", "groups": ["CLEAN", "LEAKY"]},
+    )
+
+    assert report.groups() == ["CLEAN", "LEAKY"]
+
+
 def test_grouping_removes_the_spurious_duplicate_timestamp_finding(panel):
     """
     Un-grouped, every date repeats 5x and PRF004 fires. Grouped, each entity has
@@ -142,6 +215,43 @@ def test_frequency_is_reinferred_from_one_entity(panel):
 
     assert ungrouped.metadata["frequency"] == "sub-daily"
     assert grouped.metadata["frequency"] == "daily"
+
+
+def test_panel_frequency_is_not_skewed_by_one_ragged_entity():
+    """
+    Regression. Panel frequency used to be inferred from a single entity --
+    whichever sorted first -- not the panel as a whole. A panel of 20 clean
+    daily entities plus one alphabetically-first entity with a sparse,
+    irregular history (e.g. a recent listing) reported the *entire* panel's
+    frequency as "irregular", even though every other entity, and the
+    panel's actual cadence, is daily.
+
+    Fixed by inferring from the deduplicated union of every entity's
+    timestamps rather than one entity's own index -- dominated by whichever
+    cadence the majority of entities actually share, so one ragged entity
+    can no longer skew the whole panel's reported frequency.
+    """
+    rng = np.random.default_rng(0)
+    sparse_dates = pd.to_datetime(
+        ["2024-01-01", "2024-02-15", "2024-05-03", "2024-09-30"]
+    )
+    rows = [
+        pd.DataFrame(
+            {"ticker": "AAA", "x": rng.normal(0, 1, len(sparse_dates))},
+            index=sparse_dates,
+        )
+    ]
+    daily = pd.date_range("2024-01-01", periods=250, freq="D")
+    for i in range(20):
+        rows.append(
+            pd.DataFrame(
+                {"ticker": f"B{i:02d}", "x": rng.normal(0, 1, len(daily))}, index=daily
+            )
+        )
+    df = pd.concat(rows).sort_index()
+
+    report = tsa.scan(df, group_col="ticker", run_leakage=False, run_stationarity=False)
+    assert report.metadata["frequency"] == "daily"
 
 
 def test_group_column_is_not_audited_as_a_feature(panel):
@@ -593,6 +703,74 @@ def test_pnl002_evidence_is_complete():
     assert issue.evidence["excess"] >= issue.evidence["excess_threshold"]
 
 
+def test_leaky_columns_includes_pnl002_but_not_panel_structure_findings():
+    """
+    leaky_columns() filters module="leakage", but PNL002 is tagged
+    module="panel" (it's emitted alongside the panel-structure checks, not
+    the leakage module). Without a carve-out, a cross-sectional lookahead
+    leak would silently never appear in the shortlist. PNL001/PNL003/PNL004
+    are also module="panel" but are structural findings with no column, so
+    they must not leak into the list either.
+
+    Built directly from `audit_cross_sectional_leakage` plus a synthetic
+    PNL001 issue, bypassing `scan()`, because a real panel scan's per-entity
+    LEK002/LEK003 checks can independently catch the same "leak" column
+    (that's the documented, imperfect ~22% per-entity detection rate PNL002
+    exists to backstop) -- which would mask a regression in the carve-out by
+    coincidence rather than testing it.
+    """
+    from tsauditor.report.summary import GuardReport, Issue
+
+    panel = _factor_panel(25)
+    pnl002_issues = audit_cross_sectional_leakage(
+        panel, group_col="ticker", target="target"
+    )
+    assert pnl002_issues, "fixture should trigger PNL002"
+    assert all(i.module == "panel" for i in pnl002_issues)
+
+    pnl001_issue = Issue(
+        module="panel",
+        code="PNL001",
+        severity="warning",
+        description="ragged panel",
+        column=None,
+    )
+
+    report = GuardReport(warnings=[*pnl002_issues, pnl001_issue])
+    cols = report.leaky_columns()
+
+    assert set(i.column for i in pnl002_issues) <= set(cols)
+    assert None not in cols
+
+
+def test_pnl002_unnamed_datetime_index_takes_the_unstack_branch():
+    """
+    audit_cross_sectional_leakage branches on `stamps.name`: truthy ->
+    pivot_table, falsy -> groupby().unstack(). Every other PNL002 test builds
+    its panel via `.set_index("date")`, which sets `index.name = "date"`, so
+    only the pivot_table branch was ever exercised -- the only test with an
+    unnamed index (test_pnl002_validates_input) hits the DatetimeIndex
+    ValueError before reaching the branch at all. A DatetimeIndex with no
+    name is a valid, if unusual, input (e.g. `pd.DatetimeIndex(idx.values)`
+    strips the name), so the unstack branch needs its own direct check.
+    """
+    panel = _factor_panel(25)
+    named_issues = audit_cross_sectional_leakage(
+        panel, group_col="ticker", target="target"
+    )
+
+    unnamed = panel.copy()
+    unnamed.index = pd.DatetimeIndex(unnamed.index.values)
+    assert unnamed.index.name is None
+
+    unnamed_issues = audit_cross_sectional_leakage(
+        unnamed, group_col="ticker", target="target"
+    )
+
+    assert [i.column for i in named_issues] == [i.column for i in unnamed_issues]
+    assert unnamed_issues[0].code == "PNL002"
+
+
 def test_exactly_min_entities_is_scored_not_skipped():
     """
     The gate is `target_wide.shape[1] < min_entities`, so a panel with exactly
@@ -834,6 +1012,49 @@ def test_panel_change_log_is_tagged_by_entity():
     assert all("group" in entry for entry in report.last_fixes)
 
 
+def test_apply_fixes_drops_a_column_flagged_only_by_pnl002():
+    """
+    Regression / doc-accuracy check. leaky_columns() explicitly includes
+    PNL002 (see its own docstring), so a column flagged *only* by PNL002 --
+    not by any LEK00x code -- must still be removed by
+    apply_fixes(leakage="drop"). The wiki's issue-code reference table
+    previously said "No" for PNL002 under "Repaired by apply_fixes?",
+    contradicting this; caught and corrected during a doc-consistency sweep,
+    verified empirically here rather than by reading the code alone.
+    """
+    rng = np.random.default_rng(0)
+    n_entities, n_days = 25, 150
+    dates = pd.date_range("2024-01-01", periods=n_days, freq="B")
+
+    base = rng.normal(0, 1, (n_days, n_entities))
+    target = pd.DataFrame(base, index=dates).rank(axis=1, pct=True)
+    leak = target.shift(-1)  # tomorrow's cross-sectional rank, joined back to today
+
+    frames = []
+    for e in range(n_entities):
+        frames.append(
+            pd.DataFrame(
+                {"ticker": f"E{e:02d}", "target": target[e], "leak_feature": leak[e]},
+                index=dates,
+            )
+        )
+    panel = pd.concat(frames).dropna()
+
+    report = tsa.scan(
+        panel,
+        target="target",
+        group_col="ticker",
+        run_stationarity=False,
+        run_anomaly=False,
+    )
+    pnl002 = [i for i in report.all_issues if i.code == "PNL002"]
+    assert pnl002 and pnl002[0].column == "leak_feature"
+    assert "leak_feature" in report.leaky_columns()
+
+    fixed = report.apply_fixes(panel, leakage="drop")
+    assert "leak_feature" not in fixed.columns
+
+
 def test_panel_leakage_drop_removes_the_column_once():
     """
     A leaky column either exists in the feature matrix or it does not — the drop
@@ -880,3 +1101,35 @@ def test_pnl002_is_fast_enough_for_a_realistic_panel():
     start = time.time()
     audit_cross_sectional_leakage(panel, group_col="ticker", target="target")
     assert time.time() - start < 5.0
+
+
+def test_pnl002_unnamed_datetime_index_matches_the_named_path():
+    """
+    audit_cross_sectional_leakage builds its wide entity x time matrices one
+    of two ways depending on whether `df.index.name` is set: `pivot_table`
+    when named, a manual `groupby(...).unstack()` when not (pivot_table's
+    `index=` argument needs a name to resolve against).
+
+    Every other PNL002 test in this file goes through `_factor_panel`, which
+    builds its index via `.set_index("date")` -- so `index.name` is always
+    "date", and only the pivot_table branch has ever actually run. This
+    pins the other one: the same panel with the index name stripped must
+    produce byte-identical evidence, not just "doesn't crash".
+    """
+    named = _factor_panel(25)
+    assert (
+        named.index.name == "date"
+    )  # sanity: confirms which branch this exercises elsewhere
+
+    unnamed = named.copy()
+    unnamed.index.name = None
+
+    issues_named = audit_cross_sectional_leakage(
+        named, group_col="ticker", target="target"
+    )
+    issues_unnamed = audit_cross_sectional_leakage(
+        unnamed, group_col="ticker", target="target"
+    )
+
+    assert [i.evidence for i in issues_named] == [i.evidence for i in issues_unnamed]
+    assert [i.column for i in issues_named] == [i.column for i in issues_unnamed]

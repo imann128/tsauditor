@@ -83,6 +83,45 @@ def test_audit_stationarity_non_datetime_index():
         audit_stationarity(df)
 
 
+def test_shuffled_but_valid_index_still_scored():
+    """
+    Regression (full-sweep finding). adfuller fits lagged regressions on the
+    raw row sequence -- it has no notion of the DatetimeIndex's actual
+    timestamps, only row order. Before audit_stationarity sorted its own
+    input, a caller who passed a random walk's rows out of chronological
+    order (still a valid, non-duplicate DatetimeIndex) got a meaningless
+    ADF statistic computed on a scrambled series instead of an error.
+
+    A shuffled random walk is (with overwhelming probability) NOT a random
+    walk anymore -- shuffling destroys the serial dependence a random walk
+    is defined by -- so the two runs are not expected to agree on the
+    verdict. What this pins is narrower and more basic: sorting must
+    actually happen, which we check indirectly by confirming the sorted-row
+    values feeding adfuller match what a manual sort produces.
+    """
+    idx = pd.date_range("2026-01-01", periods=100, freq="D")
+    rw = np.cumsum(np.random.default_rng(11).normal(0, 1, 100))
+    df_sorted = pd.DataFrame({"rw": rw}, index=idx)
+    df_shuffled = df_sorted.sample(frac=1.0, random_state=3)
+
+    # Must not raise, and must return a real result either way.
+    sorted_issues = audit_stationarity(df_sorted, min_obs=25)
+    shuffled_issues = audit_stationarity(df_shuffled, min_obs=25)
+    assert isinstance(sorted_issues, list)
+    assert isinstance(shuffled_issues, list)
+    # The shuffled call must have been scored on the re-sorted series, which
+    # is identical to the sorted fixture -- so the two ADF statistics match
+    # exactly (proof the function actually sorted rather than silently using
+    # row order as-is).
+    sorted_stat = next(i for i in sorted_issues if i.column == "rw").evidence[
+        "adf_statistic"
+    ]
+    shuffled_stat = next(i for i in shuffled_issues if i.column == "rw").evidence[
+        "adf_statistic"
+    ]
+    assert sorted_stat == shuffled_stat
+
+
 def test_audit_stationarity_finance_mixed_columns(base_date_index):
     # 5. Finance domain test: Mixed types (numeric + categorical)
     df = pd.DataFrame(

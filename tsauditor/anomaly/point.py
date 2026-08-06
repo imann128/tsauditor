@@ -3,6 +3,7 @@ import pandas as pd
 from scipy import stats
 
 from tsauditor.report.summary import Issue, WARNING
+from tsauditor.anomaly._common import zscore_preset, zscore_iqr_masks
 
 # Cap on how many outliers the ESD diagnostic will look for, as a fraction of
 # the column length. ESD is O(k*n); beyond ~40% contamination the "outliers"
@@ -87,6 +88,20 @@ def audit_point_anomalies(
     -------
     list
         List of Issue objects describing point anomalies (ANO002).
+
+    Notes
+    -----
+    When the z-score and IQR rules disagree (z-score finds nothing, IQR
+    finds something), ``evidence["masking_suspected"]`` flags whether a
+    generalized ESD re-scan suggests the raw z-score was blinded by heavy
+    contamination, computed as ``n_esd > n_iqr * 0.5``. That ``0.5``
+    multiplier is a heuristic, not a value derived from the ESD/Rosner
+    literature or validated against a labeled contamination benchmark; it
+    was chosen because it seemed reasonable, in the same spirit as
+    CONTRIBUTING.md's policy on float thresholds. It only affects this
+    diagnostic field, never which points get flagged, so a wrong call here
+    doesn't change what's reported as an anomaly, only how confidently the
+    evidence explains itself.
     """
     issues = []
 
@@ -101,15 +116,7 @@ def audit_point_anomalies(
     #    preset consulted only when the caller did not specify one. `is None`
     #    (not `or`) so that a deliberate 0.0 is honoured rather than treated as
     #    "unset". Mirrors audit_missing and audit_contextual_anomalies.
-    if zscore_threshold is None:
-        if domain == "finance":
-            z_thresh = 5.0
-        elif domain == "sensor":
-            z_thresh = 3.5
-        else:
-            z_thresh = 4.0
-    else:
-        z_thresh = zscore_threshold
+    z_thresh = zscore_preset(domain) if zscore_threshold is None else zscore_threshold
 
     numeric_cols = df.select_dtypes(include=["number"]).columns
 
@@ -122,20 +129,13 @@ def audit_point_anomalies(
         if series.empty:
             continue
 
-        # 3. Z-score Method
-        mean, std = series.mean(), series.std()
+        # 3-4. Z-score + IQR methods, shared with remediate.py's repair step
+        # (tsauditor.anomaly._common) so the two cannot drift apart.
+        z_mask, iqr_mask, z_scores, degenerate = zscore_iqr_masks(series, z_thresh)
         # A zero-variance column has no outliers; a NaN std (fewer than two
-        # observations) cannot be compared against. Matches the guard in
-        # remediate._outlier_mask, which must stay in lockstep with this.
-        if std == 0 or pd.isna(std):
+        # observations) cannot be compared against.
+        if degenerate:
             continue
-        z_scores = (series - mean) / std
-        z_mask = abs(z_scores) > z_thresh
-
-        # 4. IQR Method
-        q25, q75 = series.quantile([0.25, 0.75])
-        iqr = q75 - q25
-        iqr_mask = (series < q25 - 1.5 * iqr) | (series > q75 + 1.5 * iqr)
 
         # 5. Consolidate and flag
         combined_mask = z_mask | iqr_mask

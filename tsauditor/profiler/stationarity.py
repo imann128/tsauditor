@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from statsmodels.tsa.stattools import adfuller
 from tsauditor.report.summary import Issue, INFO
+from tsauditor.utils.validation import ensure_sorted_datetime_index
 
 
 def audit_stationarity(
@@ -22,9 +23,12 @@ def audit_stationarity(
     """
     issues = []
 
-    # 1. Validation: Ensure index is a DatetimeIndex
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("DataFrame index must be a pd.DatetimeIndex")
+    # 1. Validation: the ADF test fits lagged regressions on the raw row
+    # sequence -- it has no notion of the DatetimeIndex's actual timestamps,
+    # only row order. An out-of-order-but-valid index would silently feed
+    # adfuller a scrambled series and produce a meaningless statistic with
+    # no error. See ensure_sorted_datetime_index's docstring.
+    df = ensure_sorted_datetime_index(df, "audit_stationarity")
 
     if df.empty:
         return issues

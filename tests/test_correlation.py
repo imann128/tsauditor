@@ -220,6 +220,45 @@ def test_default_min_correlation_is_the_fixed_value():
     assert default == 0.5
 
 
+# ── Row-order dependence (full-sweep finding) ──────────────────────────────
+#
+# _align() slices by integer *position*, not by timestamp. Before
+# audit_correlation_leakage validated and sorted its own input, a caller
+# who passed rows out of chronological order (still a perfectly valid
+# DatetimeIndex -- shuffled, not malformed) got no error and no warning:
+# the lag search silently operated on the wrong pairing and missed a real,
+# perfect leak entirely.
+
+
+def test_shuffled_but_valid_index_still_finds_the_leak():
+    """
+    Regression. Build a dataset with an unambiguous lag+1 leak, sorted it is
+    caught (as test_future_target_leak_caught already pins); the same rows
+    shuffled into a different --  still fully valid, non-duplicate --
+    DatetimeIndex order used to come back empty instead of raising or still
+    finding it.
+    """
+    n = 300
+    t = _iid_target(n, 3)
+    df_sorted = pd.DataFrame({"target": t, "leak": t.shift(-1)}, index=_idx(n))
+    df_shuffled = df_sorted.sample(frac=1.0, random_state=3)
+
+    sorted_issues = audit_correlation_leakage(df_sorted, target="target")
+    shuffled_issues = audit_correlation_leakage(df_shuffled, target="target")
+
+    assert any(i.column == "leak" for i in sorted_issues)
+    assert any(i.column == "leak" for i in shuffled_issues)
+    sorted_leak = next(i for i in sorted_issues if i.column == "leak")
+    shuffled_leak = next(i for i in shuffled_issues if i.column == "leak")
+    assert shuffled_leak.evidence["peak_lag"] == sorted_leak.evidence["peak_lag"]
+
+
+def test_non_datetime_index_raises():
+    df = pd.DataFrame({"target": np.arange(50.0), "x": np.arange(50.0)})
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        audit_correlation_leakage(df, target="target")
+
+
 def test_peak_correlation_keeps_its_sign():
     """
     `peak_correlation` is documented as signed, and the description prints it as

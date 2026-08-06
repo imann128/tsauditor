@@ -95,6 +95,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from tsauditor.leakage.equivalence import _score_feature as _equivalence_score
 from tsauditor.report.summary import Issue, CRITICAL
 
 # Values at or below this are treated as non-positive for the log form. Using a
@@ -239,6 +240,24 @@ def audit_combination_leakage(
     List[Issue]
         Zero or more LEK005 Issues (CRITICAL), strongest group first. A triple is
         not reported when one of its own pairs was already reported.
+
+    Notes
+    -----
+    The single-feature guard (see module docstring) excludes a column from
+    every candidate group once it already "explains the target alone", so a
+    column LEK001 already flagged does not also flood the report with every
+    group it appears in. That guard checks **two** metrics, not just this
+    module's own adjusted R²: it also checks the column against
+    ``audit_equivalence``'s own AUC/Spearman score, taking whichever is
+    higher. A column with a strong monotonic but non-linear relationship to
+    the target (AUC/Spearman near 1.0, adjusted R² well below the LEK005
+    threshold) previously slipped past a guard based on R² alone and was
+    reported a second time inside a LEK005 group, with a description
+    claiming no single column in that group explains the target -- a claim
+    that was true under R² and false under LEK001's own metric, on the same
+    data, in the same scan. ``best_single_adjusted_r2`` in the evidence below
+    still reports the pure R² value (falling back to 0.0 if every column in
+    the group only qualified via the equivalence-score half of the guard).
     """
     issues: List[Issue] = []
 
@@ -263,19 +282,54 @@ def audit_combination_leakage(
 
     matrix = _Matrix(y_full, numeric, features)
 
+    # Target type/encoding, matching equivalence.py's own rule exactly, so
+    # the guard below agrees with LEK001 about what "explains the target
+    # alone" means.
+    target_n_unique = y_full.dropna().nunique()
+    if target_n_unique == 2:
+        categories = sorted(y_full.dropna().unique(), key=str)
+        y_encoded = y_full.map({categories[0]: 0.0, categories[1]: 1.0})
+        target_type = "binary"
+    else:
+        y_encoded = y_full.astype(float)
+        target_type = "continuous"
+
     # Single-column explanatory power, computed once. Used to skip groups whose
     # leakage is already attributable to one column (LEK001's job).
+    #
+    # Two metrics are checked, not one. `single` (R^2, linear/log OLS) is
+    # this module's own scoring and is what gets reported as
+    # best_single_adjusted_r2 below. But relying on it alone for the guard
+    # missed columns LEK001 already flags via a different metric
+    # (AUC/Spearman) — see equivalence._score_feature's docstring for the
+    # concrete case. `single_guard` is the max of both, and decides what
+    # counts as "usable"; `single` keeps its original meaning for reporting.
     single: Dict[str, Optional[float]] = {}
+    single_guard: Dict[str, Optional[float]] = {}
     for col in features:
         y_vals, X_vals = matrix.block([col])
-        if y_vals is None or len(y_vals) < min_obs or len(np.unique(X_vals)) < 2:
-            single[col] = None
-            continue
-        single[col] = _score_arrays(y_vals, X_vals)[0]
+        r2_score = None
+        if (
+            y_vals is not None
+            and len(y_vals) >= min_obs
+            and len(np.unique(X_vals)) >= 2
+        ):
+            r2_score = _score_arrays(y_vals, X_vals)[0]
+        single[col] = r2_score
 
-    # Columns that already explain the target alone belong to LEK001, and any
-    # group containing one would trivially score high.
-    usable = [c for c in features if single[c] is not None and single[c] < threshold]
+        eq_result = _equivalence_score(numeric[col], y_encoded, target_type, min_obs)
+        eq_score = eq_result["score"] if eq_result is not None else None
+
+        scores = [s for s in (r2_score, eq_score) if s is not None]
+        single_guard[col] = max(scores) if scores else None
+
+    # Columns that already explain the target alone (by either metric) belong
+    # to LEK001, and any group containing one would trivially score high.
+    usable = [
+        c
+        for c in features
+        if single_guard[c] is not None and single_guard[c] < threshold
+    ]
     found: List[dict] = []
     reported: List[frozenset] = []
 
@@ -343,7 +397,13 @@ def audit_combination_leakage(
 
     for item in found[:max_reported]:
         columns = item["columns"]
-        best_single = max(single[c] for c in columns)
+        # `single[c]` (pure R^2) can be None for a column that only entered
+        # `usable` via the equivalence-score half of the guard above (e.g.
+        # too few obs for the OLS fit specifically). Falls back to 0.0 rather
+        # than crashing on max() over a None.
+        best_single = max(
+            (single[c] for c in columns if single[c] is not None), default=0.0
+        )
         joined = ", ".join(f"'{c}'" for c in columns)
         relation = (
             "an additive combination (a sum, difference or weighted mix)"

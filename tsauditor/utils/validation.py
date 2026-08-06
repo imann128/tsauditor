@@ -128,7 +128,18 @@ def validate_dataframe(
                 "before calling tsauditor.scan()."
             )
 
-    df = df.sort_index()
+    # kind="mergesort" specifically: it is the one sort pandas/numpy document
+    # as stable. The default, "quicksort", is not, so two rows sharing an
+    # identical duplicate timestamp can come out in an order that depends on
+    # the input's original row order in an unspecified way rather than
+    # preserving it. That matters here because a duplicate timestamp is
+    # already a PRF004 CRITICAL finding, and both audit_frequency's own
+    # dedup (`df[~df.index.duplicated(keep="first")]`) and anything else
+    # downstream that assumes "first" means "first as the caller supplied
+    # it" would otherwise silently pick an arbitrary survivor -- the same
+    # DataFrame's rows in a different (but equally valid) input order could
+    # produce a different repaired result.
+    df = df.sort_index(kind="mergesort")
 
     # ── Validate target ───────────────────────────────────────────────────────
     if target is not None and target not in df.columns:
@@ -137,6 +148,60 @@ def validate_dataframe(
         )
 
     return df
+
+
+def ensure_sorted_datetime_index(df: pd.DataFrame, context: str) -> pd.DataFrame:
+    """
+    Validate that ``df`` has a DatetimeIndex and return it sorted ascending.
+
+    Every detector whose logic depends on row order (rolling windows,
+    ``.shift()``, consecutive-run detection, positional lag alignment) must
+    call this at its *own* entry point, not just rely on scan()'s
+    ``validate_dataframe`` having already sorted upstream. Every
+    ``audit_*``/``detect_*`` function in this package is also public API —
+    called directly in this codebase's own test suite (see
+    ``tests/test_adapters.py``, and the leakage/anomaly unit tests) — so
+    "the caller already sorted it" is only true on the ``scan()`` path, not
+    when a user imports a detector and calls it themselves.
+
+    Before this existed, a DataFrame with a genuinely valid DatetimeIndex
+    that was merely out of chronological order made these detectors produce
+    wrong-but-silent results instead of an error: ``audit_correlation_leakage``
+    and ``audit_temporal_leakage`` missed a perfect, constructed lag+1 leak
+    entirely (returned ``[]``, no exception) when the same rows were shuffled
+    out of order; ``audit_contextual_anomalies`` likewise missed an 8-point
+    stuck run. Both are silent false negatives in exactly the class of bug
+    this library exists to catch.
+
+    Uses ``kind="mergesort"`` (stable) for the same reason
+    ``validate_dataframe`` does: two rows sharing a duplicate timestamp must
+    keep their original relative order rather than an unspecified one.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input to validate.
+    context : str
+        Short description of the caller (e.g. "audit_correlation_leakage"),
+        used only to make the error message point at the right function.
+
+    Returns
+    -------
+    pd.DataFrame
+        ``df`` sorted ascending by its DatetimeIndex.
+
+    Raises
+    ------
+    ValueError
+        If ``df.index`` is not a ``pd.DatetimeIndex``.
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        # Message kept consistent with every other detector's existing
+        # ValueError wording ("DataFrame index must be a pd.DatetimeIndex")
+        # rather than inventing new phrasing -- callers and tests across the
+        # codebase already match against that exact string.
+        raise ValueError(f"DataFrame index must be a pd.DatetimeIndex ({context}).")
+    return df.sort_index(kind="mergesort")
 
 
 def infer_frequency(index: pd.DatetimeIndex) -> str:

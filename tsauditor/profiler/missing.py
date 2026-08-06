@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 from tsauditor.report.summary import Issue, WARNING, CRITICAL
+from tsauditor.profiler._common import consecutive_run_lengths
+from tsauditor.utils.validation import ensure_sorted_datetime_index
 
 # Minimum observations the leakage detectors require before they will score a
 # column (audit_equivalence, audit_correlation_leakage, audit_temporal_leakage
@@ -61,8 +63,12 @@ def audit_non_finite(df: pd.DataFrame) -> list:
     """
     issues = []
 
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("DataFrame index must be a pd.DatetimeIndex")
+    # "first_occurrence" below reports df.index[argmax(isinf)] -- the row at
+    # the first *position*, not the first chronological timestamp. On an
+    # unsorted-but-valid DatetimeIndex those differ, silently mislabeling
+    # which occurrence is "first". See ensure_sorted_datetime_index's
+    # docstring.
+    df = ensure_sorted_datetime_index(df, "audit_non_finite")
 
     if df.empty:
         return issues
@@ -127,7 +133,8 @@ def audit_missing(
         Time-series DataFrame with a DatetimeIndex.
     cluster_threshold : int, optional
         Minimum consecutive NaNs to count as a cluster. If None, derived
-        automatically from domain.
+        automatically from domain: 5 for "finance", 3 otherwise (including
+        "sensor" -- see Notes).
     missing_rate_threshold : float, default 0.30
         Proportion threshold (0.0 to 1.0) above which a column is flagged
         for high missingness.
@@ -138,16 +145,39 @@ def audit_missing(
     -------
     list
         List of Issue objects describing missing value anomalies.
+
+    Notes
+    -----
+    ``cluster_threshold``'s domain resolution only special-cases "finance";
+    "sensor" silently falls into the same default as domain=None. Unlike
+    ``audit_frequency``'s ``maximum_gap_threshold`` (which is *relative* to
+    the series' own median gap and so already adapts to any sampling
+    cadence), ``cluster_threshold`` is a flat row count. "3 consecutive
+    missing rows" means something very different for a 1-second sensor feed
+    than for daily data, so this genuinely could use a sampling-rate-aware
+    default rather than a domain-keyed one. No sensor-specific constant has
+    been added here, deliberately: picking a number without a measured basis
+    would be an unvalidated heuristic dressed up as domain expertise, the
+    same failure mode flagged elsewhere in this codebase (see
+    ``audit_point_anomalies``'s ``masking_suspected`` Notes). If this needs
+    fixing, the more defensible fix is likely making the default scale with
+    the series' inferred sampling frequency (as ``audit_frequency`` already
+    does via the series' own median gap), not adding a guessed "sensor"
+    branch.
     """
     issues = []
 
-    if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("DataFrame index must be a pd.DatetimeIndex")
+    # Cluster/consecutive-run detection (PRF002/PRF005) is inherently
+    # positional -- consecutive_run_lengths walks row-to-row. See
+    # ensure_sorted_datetime_index's docstring.
+    df = ensure_sorted_datetime_index(df, "audit_missing")
 
     if df.empty:
         return issues
 
-    # Resolve cluster_threshold from domain if not explicitly provided
+    # Resolve cluster_threshold from domain if not explicitly provided.
+    # See the Notes above: this is a known, open asymmetry, not an oversight
+    # papered over with a guessed constant.
     if cluster_threshold is None:
         cluster_threshold = 5 if domain == "finance" else 3
 
@@ -183,16 +213,7 @@ def audit_missing(
 
         # Check PRF002: Vectorized RLE for consecutive NaN clusters
         is_missing = series.isna().astype(int).values
-
-        run_starts = np.where((is_missing[:-1] == 0) & (is_missing[1:] == 1))[0] + 1
-        if len(is_missing) > 0 and is_missing[0] == 1:
-            run_starts = np.insert(run_starts, 0, 0)
-
-        run_ends = np.where((is_missing[:-1] == 1) & (is_missing[1:] == 0))[0] + 1
-        if len(is_missing) > 0 and is_missing[-1] == 1:
-            run_ends = np.append(run_ends, len(is_missing))
-
-        run_lengths = run_ends - run_starts
+        run_starts, run_ends, run_lengths = consecutive_run_lengths(is_missing)
 
         # Filter for runs that violate our structural cluster ceiling
         cluster_mask = run_lengths >= cluster_threshold

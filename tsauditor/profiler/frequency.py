@@ -1,6 +1,6 @@
-import numpy as np
 import pandas as pd
 from tsauditor.report.summary import Issue, CRITICAL, WARNING
+from tsauditor.profiler._common import consecutive_run_lengths
 
 
 def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
@@ -85,7 +85,21 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
 
     median_gap = gap_days.median()
 
-    # 3. Finding maximum_gap threshold based on domain
+    # 3. Finding maximum_gap threshold based on domain.
+    #
+    # Deliberately two-way, not three-way like the anomaly presets: the
+    # non-finance branch is already a *relative*, self-calibrating threshold
+    # (3x the series' own median gap), which adapts to whatever the actual
+    # sampling cadence is -- exactly what sensor data needs, since its
+    # cadence varies from sub-second to hourly depending on the device, and
+    # no single absolute day-count would work across that range. Finance is
+    # the one domain that gets an absolute constant instead, specifically
+    # because trading calendars have a known, bounded gap structure
+    # (weekends/holidays, ~1-4 days) that a relative multiplier would handle
+    # less predictably. A sensor-specific branch would need its own relative
+    # multiplier (not 3.0x), and there is no measured basis for a different
+    # number yet -- see audit_missing's cluster_threshold docstring for the
+    # related, less defensible version of this gap.
     if domain == "finance":
         maximum_gap_threshold = 5.0
     else:
@@ -95,10 +109,11 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
     large_gap_mask = gap_days >= maximum_gap_threshold
 
     if large_gap_mask.any():
+        # gap_days[i] is the gap ending at df_sorted row i+1, so i+1 locates
+        # it. gap_days always has length len(df_sorted) - 1, so i+1 can never
+        # reach len(df_sorted); no bounds guard is needed here.
         large_gap_indices = large_gap_mask[large_gap_mask].index
-        # Boundary guard to prevent index out of bounds on the last entry
-        safe_indices = [i + 1 for i in large_gap_indices if i + 1 < len(df_sorted)]
-        gap_locations = df_sorted.index[safe_indices]
+        gap_locations = df_sorted.index[large_gap_indices + 1]
 
         issues.append(
             Issue(
@@ -119,24 +134,17 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
 
     # 5. Detect gap clusters through run-length -> PRF005 WARNING
     is_large_gap = large_gap_mask.astype(int).values
-
-    run_starts = np.where((is_large_gap[:-1] == 0) & (is_large_gap[1:] == 1))[0] + 1
-    if len(is_large_gap) > 0 and is_large_gap[0] == 1:
-        run_starts = np.insert(run_starts, 0, 0)
-
-    run_ends = np.where((is_large_gap[:-1] == 1) & (is_large_gap[1:] == 0))[0] + 1
-    if len(is_large_gap) > 0 and is_large_gap[-1] == 1:
-        run_ends = np.append(run_ends, len(is_large_gap))
-
-    run_lengths = run_ends - run_starts
+    run_starts, run_ends, run_lengths = consecutive_run_lengths(is_large_gap)
     cluster_runs = run_lengths >= 2
 
     if cluster_runs.any():
         total_clusters = int(cluster_runs.sum())
+        # Same +1 mapping as above, same reason no bounds guard is needed:
+        # run_starts indexes into is_large_gap, which has length
+        # len(df_sorted) - 1, so cluster_starts + 1 can never reach
+        # len(df_sorted).
         cluster_starts = run_starts[cluster_runs]
-        # Boundary guard applied to cluster start indexing mapping
-        safe_cluster_indices = [i + 1 for i in cluster_starts if i + 1 < len(df_sorted)]
-        cluster_locations = df_sorted.index[safe_cluster_indices]
+        cluster_locations = df_sorted.index[cluster_starts + 1]
 
         issues.append(
             Issue(

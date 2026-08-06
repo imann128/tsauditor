@@ -158,8 +158,50 @@ def _issues_table(fig, left, top, width, issues, fontsize=8) -> None:
     _style(table, fontsize)
 
 
+def _prevalence_table(fig, left, top, width, rows, fontsize=8) -> None:
+    """
+    Draw the panel prevalence table: one row per (code, column) finding, with
+    how many entities it hits -- the panel counterpart to _issues_table.
+
+    Without this, a panel PDF rendered report.all_issues directly: one row
+    per entity per finding, with no entity label on the row at all (the row
+    tuple never included Issue.group), so a systemic bug present in every
+    entity produced hundreds or thousands of visually-identical rows with no
+    way to tell them apart, spread across as many continuation pages as it
+    took to fit them. report.summary()'s CLI output already avoided this via
+    report.prevalence(); this mirrors that for the PDF.
+    """
+    table_rows = [
+        [
+            r["severity"].upper(),
+            r["code"],
+            r["column"] or "-",
+            f"{r['n_groups']}/{r['total_groups']}"
+            if r["n_groups"] is not None
+            else "panel-level",
+            f"{r['pct']}%" if r["pct"] is not None else "-",
+            ", ".join(r["example_groups"]) or "-",
+        ]
+        for r in rows
+    ] or [["-", "-", "-", "-", "-", "-"]]
+    n = len(table_rows) + 1  # + header
+    height = n * _ROW_H
+    ax = fig.add_axes([left, top - height, width, height])
+    ax.axis("off")
+    table = ax.table(
+        cellText=table_rows,
+        colLabels=["Severity", "Code", "Column", "Entities", "%", "Examples"],
+        colWidths=[0.12, 0.10, 0.18, 0.14, 0.08, 0.38],
+        cellLoc="left",
+        bbox=[0, 0, 1, 1],
+    )
+    _style(table, fontsize)
+
+
 def _capacity(top: float) -> int:
-    """How many issue rows fit between ``top`` and the bottom margin."""
+    """How many table rows (issues or prevalence rows) fit between ``top`` and
+    the bottom margin. Both tables share the same fixed row height (_ROW_H),
+    so one capacity function serves either."""
     return max(1, int((top - _BOTTOM) / _ROW_H) - 1)  # -1 for the header row
 
 
@@ -179,8 +221,21 @@ def export_pdf(
     if fixed_df is not None:
         from tsauditor import scan
 
+        # group_col must be threaded through here exactly as
+        # GuardReport.health_score() does: without it, a panel scan treats
+        # every entity as one interleaved series (wrong detection, and even
+        # where detection is incidentally still right, affected_cells()
+        # would recompute masks on values mixed across entities of very
+        # different scale). This is the same fix as summary.py's
+        # GuardReport.to_json() -- a separate, independent copy of the same
+        # re-scan that had the same gap.
         after_report = scan(
-            fixed_df, target=meta.get("target"), domain=meta.get("domain")
+            fixed_df,
+            target=meta.get("target"),
+            domain=meta.get("domain"),
+            group_col=meta.get("group_col"),
+            run_leakage=False,
+            run_stationarity=False,
         )
         after = health_score(after_report, fixed_df)
     leak_cols = report.leaky_columns()
@@ -214,6 +269,16 @@ def export_pdf(
             )
             if meta.get(k) is not None
         ]
+        if report.is_panel:
+            # group_col/n_groups otherwise never appear anywhere in the PDF,
+            # unlike report.summary()'s CLI output, which always states the
+            # entity count and grouping column for a panel scan.
+            meta_rows.append(
+                [
+                    "Entities",
+                    f"{meta.get('n_groups')} (grouped by '{meta.get('group_col')}')",
+                ]
+            )
         _kv_table(
             fig,
             [0.08, 0.74, 0.46, 0.14],
@@ -271,24 +336,51 @@ def export_pdf(
         )
         y -= 0.04
 
-        # Issues table — on this page if it fits, otherwise continuation pages
-        issues = report.all_issues
-        fig.text(0.08, y, "Detected Issues", fontsize=14, weight="bold")
+        # Issues table — on this page if it fits, otherwise continuation pages.
+        #
+        # Panel scans use the prevalence view (one row per finding, with how
+        # many entities it hits) instead of report.all_issues. A 500-entity
+        # panel can raise tens of thousands of issues -- report.prevalence()'s
+        # own docstring cites exactly that -- and report.all_issues has no
+        # entity label on each row at all, so dumping it here would produce a
+        # PDF with hundreds of continuation pages of visually-identical,
+        # unlabeled rows for a single systemic finding. report.summary()'s
+        # CLI output already avoids this via the same prevalence data.
+        if report.is_panel:
+            heading = "Findings by Prevalence"
+            continued_heading = "Findings by Prevalence (continued)"
+            table_fn = _prevalence_table
+            rows_to_render = report.prevalence()
+        else:
+            heading = "Detected Issues"
+            continued_heading = "Detected Issues (continued)"
+            table_fn = _issues_table
+            rows_to_render = report.all_issues
+
+        fig.text(0.08, y, heading, fontsize=14, weight="bold")
         y -= 0.022
+        if report.is_panel:
+            fig.text(
+                0.08,
+                y,
+                "A finding at 100% is systemic - suspect the pipeline, not the "
+                "entities. Full per-entity detail is in the JSON export.",
+                fontsize=8,
+                style="italic",
+            )
+            y -= 0.018
         cap = _capacity(y)
-        _issues_table(fig, 0.08, y, 0.84, issues[:cap])
+        table_fn(fig, 0.08, y, 0.84, rows_to_render[:cap])
         pdf.savefig(fig)
         plt.close(fig)
 
-        rest = issues[cap:]
+        rest = rows_to_render[cap:]
         per_page = _capacity(0.92)
         for start in range(0, len(rest), per_page):
             chunk = rest[start : start + per_page]
             fig = plt.figure(figsize=_A4)
-            fig.text(
-                0.08, 0.95, "Detected Issues (continued)", fontsize=15, weight="bold"
-            )
-            _issues_table(fig, 0.08, 0.92, 0.84, chunk)
+            fig.text(0.08, 0.95, continued_heading, fontsize=15, weight="bold")
+            table_fn(fig, 0.08, 0.92, 0.84, chunk)
             pdf.savefig(fig)
             plt.close(fig)
 

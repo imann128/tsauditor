@@ -1,6 +1,6 @@
 # Panel Data
 
-**Panel data**, also called long-format or multi-entity data, is many time series stacked in one frame, distinguished by an entity column:
+**Panel data** (also called long-format or multi-entity data) is many time series stacked in one frame, distinguished by an entity column:
 
 ```
              ticker   price      ret  direction
@@ -32,7 +32,7 @@ Consider the frame above. Every timestamp appears once per entity, so tsauditor 
 - **Nonsense gap analysis.** The median gap between consecutive rows is zero, so the frequency is inferred as `"sub-daily"` for daily data.
 - **Interleaved NaN runs.** Each entity's first `ret` is NaN; stacked, these look like a scattered missingness pattern that belongs to no one.
 
-Only the leakage checks partly survive, and only by luck, pooled AUC happens to stay 1.0 when the leak holds within every entity. Change the target definition per entity and that collapses too.
+Only the leakage checks partly survive, and only by luck; pooled AUC happens to stay 1.0 when the leak holds within every entity. Change the target definition per entity and that collapses too.
 
 Here is the same panel scanned both ways:
 
@@ -47,7 +47,7 @@ Here is the same panel scanned both ways:
 
 ## What tsauditor tells you if you forget
 
-PRF004 detects the *shape* of panel duplication, every timestamp repeating a uniform number of times, and says so:
+PRF004 detects the *shape* of panel duplication (every timestamp repeating a uniform number of times) and says so:
 
 ```
 Duplicate timestamps detected in the index. Chronological alignment broken.
@@ -63,7 +63,7 @@ The evidence carries this as a flag you can test programmatically:
 report.filter(code="PRF004")[0].evidence["looks_like_panel"]   # True
 ```
 
-A single repeated timestamp among otherwise unique ones is still reported as an ordinary duplication bug, `looks_like_panel` is `False` and no hint is added.
+A single repeated timestamp among otherwise unique ones is still reported as an ordinary duplication bug: `looks_like_panel` is `False` and no hint is added.
 
 ---
 
@@ -77,7 +77,7 @@ for entity, sub in df.groupby(group_col):
         issue.group = entity
 ```
 
-**No detector knows what a panel is.** `audit_equivalence` sees exactly what it always sees: one DataFrame, one time series. This is deliberate, panel support adds no branching to the detection logic, so it cannot introduce subtle inconsistencies between panel and non-panel results.
+**No detector knows what a panel is.** `audit_equivalence` sees exactly what it always sees: one DataFrame, one time series. This is deliberate; panel support adds no branching to the detection logic, so it cannot introduce subtle inconsistencies between panel and non-panel results.
 
 Three consequences worth knowing:
 
@@ -122,12 +122,12 @@ Critical: 5  Warnings: 14  Info: 0
 | Reach | What it usually means |
 | ----- | --------------------- |
 | **100%** | A **pipeline bug**. Every entity cannot independently develop the same defect. Something in your feature construction is wrong for everyone. |
-| **20–80%** | A **subset problem**. Some entities share a property: a data vendor, a listing venue, a sensor model: that the others do not. |
+| **20–80%** | A **subset problem**. Some entities share a property (a data vendor, a listing venue, a sensor model) that the others do not. |
 | **A few percent** | **Isolated**. Individual entities worth inspecting. Often genuine, often benign. |
 
 In the table above, `LEK001` on `ret` at 100% is exactly the first case: `ret` defines `direction` by construction, for every ticker. No amount of per-entity investigation would help; the target definition is the problem.
 
-`ANO001` on `direction` at 80% is the second case, and it is a *false positive*, a binary label consists of long runs of identical values, which is what stuck-value detection looks for. See [Anomaly Detectors](Detectors-Anomaly#limitations-and-false-positives).
+`ANO001` on `direction` at 80% is the second case, and it is a *false positive*: a binary label consists of long runs of identical values, which is what stuck-value detection looks for. See [Anomaly Detectors](Detectors-Anomaly#limitations-and-false-positives).
 
 ### Programmatic access
 
@@ -152,7 +152,7 @@ pd.DataFrame(report.prevalence())
 
 Each row has: `code`, `module`, `severity`, `column`, `n_groups`, `total_groups`, `pct`, `n_issues`, `example_groups`.
 
-`to_json()` gains a `panel` block containing `group_col`, `n_groups`, and the full prevalence table; individual issues carry their `group`.
+`to_json()` gains a `panel` block containing `group_col`, `n_groups`, and the full prevalence table; individual issues carry their `group`. `to_pdf()` renders the same prevalence table in place of the raw per-issue listing, since a large panel's issue count can span hundreds of continuation pages otherwise.
 
 ---
 
@@ -161,17 +161,19 @@ Each row has: `code`, `module`, `severity`, `column`, `n_groups`, `total_groups`
 Four checks exist that are meaningless for a single series.
 
 ### PNL001: Ragged panel
+
 **WARNING**, dataset-level.
 
 Entities do not share a common time index. AAA has 200 days, BBB has 150, CCC has 100.
 
 *Evidence:* `n_groups`, `n_timestamps`, `min_coverage`, `max_coverage`, `n_complete_groups`, `worst_groups`, `group_col`
 
-This matters because it is invisible per-entity, each series looks fine on its own, but it silently breaks every cross-sectional operation. A market-wide average computed at time *t* covers a different set of entities than the one at *t+1*. A pivot to wide format produces NaNs whose meaning ("not listed yet" vs "data missing") is unrecoverable.
+This matters because it is invisible per-entity (each series looks fine on its own) but it silently breaks every cross-sectional operation. A market-wide average computed at time *t* covers a different set of entities than the one at *t+1*. A pivot to wide format produces NaNs whose meaning ("not listed yet" vs "data missing") is unrecoverable.
 
 Raggedness is often legitimate: companies IPO and delist, sensors are installed and retired. PNL001 is a WARNING, not an error. It tells you the shape of the problem so you can decide between reindexing onto the full timestamp set, restricting to complete entities, or handling the imbalance explicitly.
 
 ### PNL003: Entity too short to audit
+
 **INFO**, dataset-level.
 
 Some entities have fewer than 30 rows, below the `min_obs` floor the leakage checks and the ADF test need.
@@ -181,18 +183,51 @@ Some entities have fewer than 30 rows, below the `min_obs` floor the leakage che
 The point of this check is to stop you misreading silence as health. A 12-row entity produces no LEK001 finding, but that is because the check *declined to score it*, not because it is clean. Without PNL003 those entities look identical to genuinely healthy ones in the prevalence table.
 
 ### PNL004: Rows with a null entity id
+
 **WARNING**, dataset-level.
 
-Some rows have a null (`NaN`/`None`) value in `group_col`. `groupby(group_col)` drops null keys by default, there is no entity identity to assign coverage, short-history, or leakage findings to, so these rows are excluded from *every* check `scan()` runs, panel-level and per-entity alike. `apply_fixes()` leaves them untouched for the same reason: there is no single entity's distribution to repair them from.
+Some rows have a null (`NaN`/`None`) value in `group_col`. There is no entity to assign them to.
 
 *Evidence:* `n_null_rows`, `n_total_rows`, `pct_null`, `group_col`
 
-This is the sharpest version of the "silence is not health" problem in this module: a null-id row produces exactly zero findings, in either direction, from anything. Before PNL004 existed this happened invisibly. If you see it, either backfill the entity id for those rows or drop them explicitly, do not treat their clean-looking report as a clean result.
+`df.groupby(group_col)` drops null keys by default: the only sound choice, since there is no entity identity to compare coverage or short-history against. But that means these rows silently receive **zero** checks under the ordinary scan path: not the panel-level checks above, not any per-entity check (leakage, anomaly, profiler) either, since the same `groupby` drives the per-entity loop. A null-id row used to look identical to a clean one, simply because nothing ever examined it.
+
+PNL004 reports the count and percentage up front so that silence elsewhere can't be misread as health. These rows are also left untouched by `apply_fixes()` (there is no single entity's distribution to repair them from), and that skip is now explicit, logged in `last_fixes` as `action: "skip_null_group_rows"`, rather than an accidental side effect of `NaN != NaN`.
+
+```python
+report.filter(code="PNL004")[0].evidence["n_null_rows"]
+```
+
+Worked example:
+
+```python
+import pandas as pd, numpy as np
+from tsauditor.panel import audit_panel_structure
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2024-01-01", periods=100, freq="D")
+parts = [
+    pd.DataFrame({"ticker": t, "price": 100 + np.cumsum(rng.normal(0, 1, 100))}, index=dates)
+    for t in ("AAA", "BBB")
+]
+df = pd.concat(parts).sort_index()
+df.iloc[0:20, df.columns.get_loc("ticker")] = None   # 20 rows with no entity id
+
+for issue in audit_panel_structure(df, group_col="ticker"):
+    print(issue.code, issue.severity, issue.evidence)
+```
+
+```
+PNL004 warning {'n_null_rows': 20, 'n_total_rows': 200, 'pct_null': 10.0, 'group_col': 'ticker'}
+```
+
+This fires even when only one *named* entity remains: a null-id row deserves a report regardless of how many real entities are left, so PNL004 is not subject to the "one entity is just a time series" early return the other panel checks use.
 
 ### PNL002: Cross-sectional lookahead
+
 **WARNING**, dataset-level. Needs both `group_col=` and `target=`.
 
-This is the panel-native leak. A cross-sectional feature, a rank, z-score, decile, or sector-neutralised value computed *across entities at one timestamp*, is legitimate:
+This is the panel-native leak. A cross-sectional feature (a rank, z-score, decile, or sector-neutralised value computed *across entities at one timestamp*) is legitimate:
 
 ```python
 panel["xs_rank"] = panel.groupby("date")["ret"].rank(pct=True)          # fine
@@ -219,9 +254,9 @@ They do detect this, but only when idiosyncratic variation is large relative to 
 | **25** | **32.5%** | **22.5%** | **detected** |
 | **100** | **22.5%** | **12.5%** | **detected** |
 
-Real equity markets sit in the region where this matters, market factors routinely explain most of individual daily return variance.
+Real equity markets sit in the region where this matters: market factors routinely explain most of individual daily return variance.
 
-**And the failure is worse than a plain miss.** At a 25:1 ratio, LEK002 flagged the *legitimate* `xs_rank` in 11 of 40 entities and the *leak* in 13 of 40. That is essentially no discriminating power. Worse, the prevalence table then reports the leak at 32%, which reads as "isolated, a few odd tickers" when it is in fact present in every one of them.
+**And the failure is worse than a plain miss.** At a 25:1 ratio, LEK002 flagged the *legitimate* `xs_rank` in 11 of 40 entities and the *leak* in 13 of 40. That is essentially no discriminating power. Worse, the prevalence table then reports the leak at 32%, which reads as "isolated: a few odd tickers" when it is in fact present in every one of them.
 
 PNL002 flags the leak and leaves `xs_rank` alone, at every ratio.
 
@@ -242,7 +277,8 @@ Reproduce the numbers above with `python docs/proposals/pnl002_evidence.py`.
 ```python
 import pandas as pd, numpy as np, tsauditor as tsa
 
-# Build a 5-ticker panel where `ret` defines `direction`: a planted leakdates = pd.date_range("2024-01-01", periods=200, freq="B")
+# Build a 5-ticker panel where `ret` defines `direction`: a planted leak
+dates = pd.date_range("2024-01-01", periods=200, freq="B")
 parts = []
 for i, ticker in enumerate(["AAA", "BBB", "CCC", "DDD", "EEE"]):
     rng = np.random.default_rng(i)
@@ -284,11 +320,17 @@ report = tsa.scan(panel, group_col="ticker", domain="finance", run_stationarity=
 clean = report.apply_fixes(panel)
 ```
 
+`fix()` accepts `group_col=` directly too, for the one-shot scan + repair form:
+
+```python
+clean, report = tsa.fix(panel, target="direction", group_col="ticker", domain="finance")
+```
+
 **This matters more than it sounds.** Repairing an interleaved panel as one series carries values across entity boundaries. Measured on a two-entity panel where one series sits near 10 and the other near 1000, a gap in the low series was filled with **~1000**, the other entity's values, silently. Partitioning first fills it with ~10, correctly.
 
 Three guarantees on top of the usual ones:
 
-- **Row order, index and shape are preserved exactly.** Write-back is positional, not label-based, a panel index repeats each timestamp once per entity, so a `.loc` assignment would scatter one entity's repairs across all of them.
+- **Row order, index and shape are preserved exactly.** Write-back is positional, not label-based: a panel index repeats each timestamp once per entity, so a `.loc` assignment would scatter one entity's repairs across all of them.
 - **The change log is tagged per entity.** Each `report.last_fixes` entry gains a `group` key.
 - **Leaky-column drops are frame-wide.** A column either exists in the feature matrix or it does not, so `leakage="drop"` removes it once rather than once per entity.
 
@@ -302,6 +344,17 @@ for entry in report.last_fixes:
 ```
 
 ---
+
+## Health score is per-entity, not pooled
+
+`health_score()` (and the health block inside `to_json()`/`to_pdf()`) recomputes each outlier/spike/stuck mask **per entity**, against only that entity's own Issues, when the report came from a `group_col=` scan:
+
+```python
+report = tsa.scan(panel, group_col="ticker", domain="finance", run_stationarity=False)
+report.health_score(panel)
+```
+
+This matters for the same reason repair does. Recomputing one mask across the whole interleaved panel mixes every entity's values into a single mean/std/rolling-window: a real outlier in a small-scale entity can be diluted below a large-scale entity's ordinary range and vanish from the score entirely, or the reverse. Scoring per entity mirrors what the original per-entity scan and `apply_fixes()` already do.
 
 ## Performance
 
@@ -318,8 +371,6 @@ Non-stationarity is a per-column modeling note rated INFO. Across 500 entities i
 ---
 
 ## Limitations
-
-**Health score is computed on the pooled frame.** It counts affected cells across the whole panel and does not break down per entity.
 
 **No parallelism.** Entities are scanned sequentially.
 

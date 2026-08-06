@@ -6,7 +6,7 @@ Installation
    pip install tsauditor
 
 Requires Python >= 3.9. Core dependencies: ``pandas``, ``numpy``, ``scipy``,
-``statsmodels``, ``rich``, ``joblib``.
+``statsmodels``, ``rich``.
 
 Optional extras (install only what you need):
 

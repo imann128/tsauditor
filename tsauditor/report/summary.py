@@ -169,7 +169,19 @@ class GuardReport:
         return self.metadata.get("group_col") is not None
 
     def groups(self) -> List[str]:
-        """Sorted list of every entity scanned. Empty for a single-series scan."""
+        """
+        Sorted list of every entity scanned. Empty for a single-series scan.
+
+        Backed by ``metadata["groups"]``, populated by ``scan(group_col=...)``
+        from the full partition list before any checks run, so an entity with
+        zero issues is still included. Reports built without going through
+        ``scan()`` (e.g. constructed by hand in tests) fall back to the
+        entities that produced at least one ``Issue``, since there is no
+        other source for the full list in that case.
+        """
+        full_list = self.metadata.get("groups")
+        if full_list is not None:
+            return sorted(full_list)
         return sorted({i.group for i in self.all_issues if i.group is not None})
 
     def groups_affected(
@@ -263,11 +275,18 @@ class GuardReport:
 
     def leaky_columns(self) -> List[str]:
         """
-        Columns flagged by the leakage module — the features to review/remove
-        first. The library never drops them for you; this is the shortlist.
+        Columns flagged by the leakage module, plus PNL002 (cross-sectional
+        lookahead) — the features to review/remove first. The library never
+        drops them for you; this is the shortlist.
+
+        PNL002 is tagged ``module="panel"`` rather than ``"leakage"`` because
+        it is emitted alongside PNL001/PNL003 (panel *structure* checks, not
+        leakage findings) by the same panel-level pass. It is carved in here
+        by code rather than by module so PNL001/PNL003 stay excluded.
         """
-        cols = [i.column for i in self.filter(module="leakage") if i.column]
-        return sorted(set(cols))
+        leakage_cols = [i.column for i in self.filter(module="leakage") if i.column]
+        pnl002_cols = [i.column for i in self.filter(code="PNL002") if i.column]
+        return sorted(set(leakage_cols) | set(pnl002_cols))
 
     def suggestions(self) -> List[Dict[str, Any]]:
         """
@@ -299,6 +318,21 @@ class GuardReport:
         recorded on ``self.last_fixes``.
 
         See ``tsauditor.remediate.apply_fixes`` for the full parameter docs.
+
+        Notes
+        -----
+        Every repair step (outlier clipping/NaN-ing, spike handling, stuck-run
+        replacement) re-detects its own targets from the *original* ``df``
+        passed in, never from the partially-repaired copy earlier steps have
+        already produced. A column can carry more than one finding (e.g. an
+        ANO002 outlier and an ANO003 spike, or a value stuck at an extreme
+        constant that is both an ANO002 outlier and an ANO001 stuck run), and
+        detecting against an already-clipped or already-NaN'd value would
+        change what a later step finds -- silently missing cells the original
+        audit reported, or crediting the wrong action in ``last_fixes`` for a
+        cell two steps both touch. Detecting against the same pristine input
+        the audit itself scored means each step always finds exactly what its
+        own ``Issue`` reported, regardless of repair order.
 
         Examples
         --------
@@ -498,10 +532,24 @@ class GuardReport:
             if fixed_df is not None:
                 from tsauditor import scan
 
+                # group_col must be threaded through here exactly as
+                # GuardReport.health_score() does below: without it, a panel
+                # scan treats every entity as one interleaved series, which
+                # both misdetects quality issues (a rolling window spanning
+                # entity boundaries) and, even where detection is
+                # incidentally still right, affected_cells() would then
+                # recompute masks on values mixed across entities of very
+                # different scale. run_leakage/run_stationarity are also
+                # dropped here to match health_score()'s own re-scan --
+                # neither affects the score, and ADF is the most expensive
+                # check in the whole pipeline.
                 after_report = scan(
                     fixed_df,
                     target=self.metadata.get("target"),
                     domain=self.metadata.get("domain"),
+                    group_col=self.metadata.get("group_col"),
+                    run_leakage=False,
+                    run_stationarity=False,
                 )
                 health["score_after"] = health_score(after_report, fixed_df)
             payload["health"] = health

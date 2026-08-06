@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tsauditor"
-version = "0.4.0"
+version = "0.5.0"
 description = "A data quality auditing library for time-series tabular data in financial and sensor domains."
 readme = "README.md"
 license = { text = "MIT" }

@@ -21,7 +21,7 @@ report = tsa.scan(panel, group_col="ticker", run_stationarity=False)
 clean = report.apply_fixes(panel)
 ```
 
-This is not cosmetic. Repairing an interleaved panel as a single series carries values across entity boundaries, measured on a two-entity panel, a gap in a series near 10 was filled with **~1000** from the other entity. Row order, index and shape are preserved exactly (write-back is positional, since a panel index repeats each timestamp per entity), each `last_fixes` entry gains a `group` key, and `leakage="drop"` removes a column frame-wide rather than once per entity.
+This is not cosmetic. Repairing an interleaved panel as a single series carries values across entity boundaries: measured on a two-entity panel, a gap in a series near 10 was filled with **~1000** from the other entity. Row order, index and shape are preserved exactly (write-back is positional, since a panel index repeats each timestamp per entity), each `last_fixes` entry gains a `group` key, and `leakage="drop"` removes a column frame-wide rather than once per entity.
 
 See [Panel Data](Panel-Data#repairing-a-panel).
 
@@ -49,11 +49,13 @@ These hold for every repair path and are worth relying on.
 | ANO003 contextual spikes | Yes | clip to local band / NaN |
 | ANO001 stuck values | Yes | NaN, then impute |
 | PRF002, PRF006 missing | Yes | impute |
-| PRF007 infinite values | **Yes, always** | NaN, then impute |
-| LEK001–LEK004 leakage | **Opt-in only** | drop the whole column |
-| PRF001, PRF004, PRF005 index problems | **No** |: |
-| PRF003 non-stationarity | **No** |: |
-| VAL001, VAL002 validity | **No** |: |
+| PRF007 infinite values | Yes, unconditionally | NaN, then impute (not gated by `outliers=`/`missing=` the way the others are) |
+| LEK001–LEK005 leakage | **Opt-in only** | drop the whole column |
+| PRF001, PRF004, PRF005 index problems | **No** | N/A |
+| PRF003 non-stationarity | **No** | N/A |
+| VAL001, VAL002 validity | **No** | N/A |
+| PNL001, PNL002, PNL003 panel structure | **No** | N/A |
+| PNL004 null entity id | **No**, by design | rows are left exactly as found; the skip is logged as `skip_null_group_rows` |
 
 The gaps are deliberate.
 
@@ -88,11 +90,11 @@ clean = report.apply_fixes(
 
 An invalid value raises `ValueError` immediately, before anything is modified.
 
-Two naming quirks to be aware of. `"drop"` for outliers is an **alias for `"nan"`**, it does not drop anything, because rows are never deleted. And `outliers=` controls contextual spikes (ANO003) as well as point outliers (ANO002), despite the name.
+Two naming quirks to be aware of. `"drop"` for outliers is an **alias for `"nan"`**: it does not drop anything, because rows are never deleted. And `outliers=` controls contextual spikes (ANO003) as well as point outliers (ANO002), despite the name.
 
 ### Execution order
 
-The order is not arbitrary, steps 2 and 3 feed step 4.
+The order is not arbitrary: steps 2 and 3 feed step 4.
 
 **1. Leakage** (only if `leakage="drop"`). Every column in `report.leaky_columns()` is removed, except the target.
 
@@ -107,21 +109,13 @@ upper = min(mean + z_thresh × std,  Q3 + 1.5 × IQR)
 
 Taking the intersection means clipping pulls in exactly the points that either rule flagged, and leaves every point that neither rule flagged untouched.
 
-For ANO003 columns, clipping targets the **local** band `local_mean ± threshold × local_std`, because a contextual spike is a local anomaly. Clipping it to a global bound would be meaningless, the whole point of ANO003 is that the value is globally ordinary.
+For ANO003 columns, clipping targets the **local** band `local_mean ± threshold × local_std`, because a contextual spike is a local anomaly. Clipping it to a global bound would be meaningless; the whole point of ANO003 is that the value is globally ordinary.
 
 With `"nan"`, flagged cells are set to NaN and their columns are queued for imputation.
 
 **3. Stuck values** (only if `stuck="nan"`). Flagged runs become NaN and are queued for imputation.
 
-**3b. Infinite values** (PRF007). Flagged infinities become NaN and are queued for imputation.
-
-This step is the one exception to "only if you asked for it": it runs unconditionally, with no parameter to disable it. Every other repair is opt-in because there is a legitimate reading under which the original value should be kept, an outlier may be a real market event, a stuck run may be a genuine trading halt. There is no such reading for an infinity. It is the residue of a division by zero, an overflow, or a log of a non-positive number, and keeping it makes the column's mean `inf`, its standard deviation `NaN`, and `scikit-learn` raise at `fit` time.
-
-If `missing=None`, the cells are left as NaN rather than imputed. NaN is honest about the value being unknown; `inf` is a false claim about its size.
-
-**Why it runs before imputation, not after.** `interpolate` filling a NaN that neighbours an infinity carries the infinity into the gap. On real data, five features built from the OGDC series by ordinary feature engineering, 19 infinities across 3 columns became **35** after `fix()` in 0.3.0, because `log_ret` had a NaN run sitting against an infinity. Converting first makes this impossible.
-
-**4. Imputation** (only if `missing` is not `None`). Fills columns flagged PRF002/PRF006 **plus** every column NaN-ed in steps 2, 3 and 3b.
+**4. Imputation** (only if `missing` is not `None`). Fills columns flagged PRF002/PRF006 **plus** every column NaN-ed in steps 2 and 3.
 
 `"interpolate"` uses `method="time"` on a `DatetimeIndex` and `method="linear"` otherwise, with `limit_direction="both"` so leading and trailing NaNs are also filled.
 
@@ -143,22 +137,30 @@ for entry in report.last_fixes:
 {'column': 'price', 'action': 'impute_interpolate', 'cells_changed': 27}
 ```
 
-Possible `action` values: `drop_column`, `clip_outliers`, `outliers_to_nan`, `clip_spikes`, `spikes_to_nan`, `stuck_to_nan`, `impute_ffill`, `impute_bfill`, `impute_interpolate`.
+Possible `action` values: `drop_column`, `clip_outliers`, `outliers_to_nan`, `clip_spikes`, `spikes_to_nan`, `stuck_to_nan`, `non_finite_to_nan`, `impute_ffill`, `impute_bfill`, `impute_interpolate`. On a panel scan, `skip_null_group_rows` also appears when rows with a null `group_col` value were left untouched (see [Panel Data](Panel-Data)).
 
 `last_fixes` is overwritten on each call, not appended to.
 
 ---
 
 ## `fix`: the one-shot wrapper
+
 ```python
 clean, report = tsa.fix(df, target="Direction", domain="finance")
 ```
 
-Exactly equivalent to `scan()` followed by `apply_fixes()`. It always returns **both** values, so the audit trail cannot be silently discarded, you keep the record of what changed and why.
+Exactly equivalent to `scan()` followed by `apply_fixes()`. It always returns **both** values, so the audit trail cannot be silently discarded; you keep the record of what changed and why.
 
-`missing`, `outliers`, `stuck`, `leakage`, and `verbose` pass straight through.
+`missing`, `outliers`, `stuck`, `leakage`, and `verbose` pass straight through. `fix()` also accepts `available_at=`, `constraints=`, and `group_col=`, forwarding all three to the underlying `scan()` call, so LEK004 (as-of leakage), VAL001/VAL002 (validity), and panel repair can all run as part of a one-shot call, not just through a separate `scan()` + `apply_fixes()` call.
 
-One limitation: `fix()` does not accept `available_at` or `constraints`, so LEK004 and the validity checks never run through this path. If you need them, call `scan()` and `apply_fixes()` separately.
+```python
+clean, report = tsa.fix(
+    df,
+    target="Direction",
+    available_at={"cpi": pd.Timedelta(days=30)},
+    constraints={"sentiment": (-1, 1)},
+)
+```
 
 ---
 
@@ -180,7 +182,7 @@ report.health_score(df)
 
 rounded to one decimal place. Returns `100.0` if there are no numeric columns.
 
-**Which codes count.** Only these six:
+**Which codes count.** Only these:
 
 ```
 PRF002, PRF006  (missing)
@@ -190,9 +192,9 @@ ANO002          (point outliers)
 ANO003          (contextual spikes)
 ```
 
-In practice PRF007 rarely moves the score, because ANO003 already marks those positions: an infinity's deviation from its local mean is infinite, so it always clears the spike threshold. Measured on the OGDC-derived features above, the score is 85.2 with or without PRF007 counted. It is included for correct attribution rather than to change the number.
+On a panel scan, `affected_cells` is computed per entity, not pooled across the whole interleaved frame, for the same reason repair is: see [Panel Data](Panel-Data#health-score-is-per-entity-not-pooled).
 
-**Leakage is deliberately excluded.** A leaky column is a modeling risk, not a corrupt cell. Its values are perfectly valid data. Including leakage would conflate two different kinds of problem and make the score meaningless, you would not know whether a low score meant "dirty data" or "one bad feature."
+**Leakage is deliberately excluded.** A leaky column is a modeling risk, not a corrupt cell. Its values are perfectly valid data. Including leakage would conflate two different kinds of problem and make the score meaningless; you would not know whether a low score meant "dirty data" or "one bad feature."
 
 Non-stationarity (PRF003), index problems (PRF001/004/005), and validity (VAL001/002) are also excluded.
 
@@ -275,7 +277,7 @@ repaired NaNs     : 0
 
 ## Read this before trusting the defaults
 
-**`clip_outliers` changed 18 cells, not 1.** Only one outlier was planted. The other 17 come from the IQR fence, which on this data flags a chunk of the legitimate tail. This is not a bug, it is the documented behaviour of the 1.5×IQR rule on real distributions, but it means **`apply_fixes` modifies substantially more data than the number of faults you are aware of.**
+**`clip_outliers` changed 18 cells, not 1.** Only one outlier was planted. The other 17 come from the IQR fence, which on this data flags a chunk of the legitimate tail. This is not a bug; it is the documented behaviour of the 1.5×IQR rule on real distributions, but it means **`apply_fixes` modifies substantially more data than the number of faults you are aware of.**
 
 Always read `last_fixes` before accepting a repair. If `cells_changed` is far larger than you expected, inspect before proceeding. See the [Anomaly Detectors](Detectors-Anomaly#limitations-and-false-positives) page for why the IQR rule behaves this way.
 
@@ -296,7 +298,7 @@ clean = report.apply_fixes(
 )
 ```
 
-This repairs only the failures that are unambiguous, frozen sensors and gaps, and leaves the judgement calls to you.
+This repairs only the failures that are unambiguous (frozen sensors and gaps) and leaves the judgement calls to you.
 
 ---
 
@@ -310,6 +312,16 @@ This repairs only the failures that are unambiguous, frozen sensors and gaps, an
 | `"sensor"` | 3.5 | 3 | 3.0 |
 | `None` | 4.0 | 5 | 3.5 |
 
-These duplicate the detector modules' values. That duplication is a real maintenance hazard, if one side changed and the other did not, `apply_fixes` would silently modify cells the report never flagged. `tests/test_fix.py` asserts the repaired cell count matches the detector's own evidence, which pins them together. Keep that test passing if you touch either side.
+**These are not duplicated anymore.** Earlier versions of `apply_fixes` kept its own hand-copied version of every detector threshold and masking formula, connected to the real detectors (`anomaly/point.py`, `anomaly/contextual.py`) only by a comment. That drifted out of sync in practice once (a single-row-gap fix landed in the stuck-run detector without a matching update to the repair side, so `scan()` flagged a run that `apply_fixes` then silently failed to touch). Every threshold preset and masking formula above now lives in one place, `tsauditor/anomaly/_common.py`, imported by both the detectors and `apply_fixes`. There is no second copy left to drift; `tests/test_fix.py::test_detector_and_repair_share_the_same_threshold_and_mask_functions` asserts this by identity (the detector and repair modules resolve to the *same function object*), not just by matching output.
 
 See [Domain Presets](Domain-Presets) for the full picture.
+
+---
+
+## Repair order matters when a column has more than one finding
+
+A single column can carry more than one issue at once: an ANO002 outlier and an ANO003 spike, or a value stuck at an extreme constant, which is simultaneously an ANO002 outlier *and* an ANO001 stuck run. `apply_fixes` runs its repair steps in a fixed order (outliers/spikes, then stuck values, then imputation), and **every step detects its own targets from the original `df` you passed in, never from the version earlier steps have already modified.**
+
+This matters because detecting against an already-repaired column would silently change what a later step finds: an earlier step's NaN could make a later step "rediscover" nothing for cells the original scan actually flagged (so `last_fixes` would credit only the first action, even though the report raised both), and an earlier clip could shift the local rolling statistics ANO003's spike detection depends on for *other* nearby cells whose own value never changed. Re-detecting against the same pristine input the audit itself scored means each step always finds exactly what its own `Issue` reported, regardless of what an earlier step already touched.
+
+`cells_changed` in each `last_fixes` entry counts only the cells *that step* newly changes: a cell another step already NaN'd is not counted again, and a step that ends up changing nothing no longer adds a zero-`cells_changed` entry to the log.

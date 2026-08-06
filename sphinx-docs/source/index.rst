@@ -19,9 +19,12 @@ data-leakage between features and the prediction target.
    clean, report = tsa.fix(df, target="Direction", domain="finance")
 
 For a from-zero, runnable walkthrough of the whole scan -> read -> repair
-workflow, see :doc:`quickstart`. For everything added in the most recent
-release, see the `0.4.0 tutorial
+workflow, see :doc:`quickstart`. For a tour of what 0.4.0 added (PRF007,
+PNL004, and more), see the `0.4.0 tutorial
 <https://github.com/imann128/tsauditor/tree/main/examples/whats_new_0_4_0>`_.
+0.5.0 is a maintenance release; see the `changelog
+<https://github.com/imann128/tsauditor/blob/main/CHANGELOG.md>`_ for what
+changed.
 
 .. toctree::
    :maxdepth: 2

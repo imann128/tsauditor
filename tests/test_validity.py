@@ -131,6 +131,101 @@ def test_scan_flat_bounds_mapping_treated_as_bounds():
     assert any(i.code == "VAL001" for i in report.all_issues)
 
 
+# ── Flat/nested dispatch: "bounds"/"relations" as real column names ────────────
+#
+# scan() has to guess whether `constraints` is the nested {"bounds": ...,
+# "relations": ...} form or a flat {col: spec} shorthand. It used to guess by
+# key presence alone (`.get("bounds")` / `.get("relations")` both None =>
+# flat), which broke the moment a real column happened to be named "bounds"
+# or "relations" -- a flat dict bounding such a column was misread as the
+# nested form, and audit_validity crashed unpacking a spec dict as a
+# (low, high) pair. These pin the structural fix: distinguish by shape
+# (nested "bounds" is dict-of-dicts, nested "relations" is a list of pairs;
+# neither shape a flat per-column spec can ever take), not by key name.
+
+
+def test_scan_flat_bounds_column_named_relations_no_longer_crashes():
+    """
+    Regression. {"spread": {...}, "relations": {"min": 0}} is a flat bounds
+    dict for two columns, one of them unfortunately named "relations". This
+    used to crash with `ValueError: too many values to unpack (expected 2)`
+    because opts.constraints.get("relations") returned the spec dict
+    {"min": 0}, which is not None, so the flat-dict fallback never fired and
+    audit_validity received it as a relations pair to unpack.
+    """
+    import tsauditor as tsa
+
+    spread = np.full(20, 0.5)
+    spread[3] = -0.5  # violates spread's min
+    relations_col = np.full(20, 5.0)
+    relations_col[7] = -1.0  # violates relations_col's min
+    df = pd.DataFrame({"spread": spread, "relations": relations_col}, index=_idx(20))
+
+    report = tsa.scan(
+        df,
+        constraints={
+            "spread": {"min": 0, "min_exclusive": True},
+            "relations": {"min": 0},
+        },
+        run_stationarity=False,
+    )
+    val001 = report.filter(code="VAL001")
+    assert {i.column for i in val001} == {"spread", "relations"}
+    assert report.filter(code="VAL002") == []  # no relation pairs were declared
+
+
+def test_scan_flat_bounds_column_named_bounds_no_longer_crashes():
+    """
+    Mirrors the "relations" case for a column literally named "bounds". This
+    used to fail differently: opts.constraints.get("bounds") returned the
+    spec dict for that column, the flat-dict fallback never fired, and
+    audit_validity's bounds loop tried to call .get() on the spec's own
+    scalar values instead of a per-column spec dict.
+    """
+    import tsauditor as tsa
+
+    volume = np.full(20, 100.0)
+    volume[2] = -5.0  # violates volume's min
+    bounds_col = np.full(20, 1.0)
+    bounds_col[9] = -1.0  # violates bounds_col's min
+    df = pd.DataFrame({"volume": volume, "bounds": bounds_col}, index=_idx(20))
+
+    report = tsa.scan(
+        df,
+        constraints={"volume": {"min": 0}, "bounds": {"min": 0}},
+        run_stationarity=False,
+    )
+    val001 = report.filter(code="VAL001")
+    assert {i.column for i in val001} == {"volume", "bounds"}
+
+
+def test_scan_nested_bounds_and_relations_together_still_works():
+    """
+    The genuine nested form, with both keys present at once, must still
+    dispatch correctly now that detection is structural rather than
+    presence-based.
+    """
+    import tsauditor as tsa
+
+    bid = np.full(30, 100.0)
+    ask = np.full(30, 100.2)
+    ask[5] = 99.0  # crossed book
+    spread = ask - bid
+    spread[10] = -0.5  # out-of-range spread (separate from the crossed row)
+    df = pd.DataFrame({"bid": bid, "ask": ask, "spread": spread}, index=_idx(30))
+
+    report = tsa.scan(
+        df,
+        constraints={
+            "bounds": {"spread": {"min": 0, "min_exclusive": True}},
+            "relations": [("bid", "ask")],
+        },
+        run_stationarity=False,
+    )
+    assert any(i.code == "VAL001" and i.column == "spread" for i in report.all_issues)
+    assert any(i.code == "VAL002" for i in report.critical)
+
+
 # ── Edge cases ────────────────────────────────────────────────────────────────
 
 

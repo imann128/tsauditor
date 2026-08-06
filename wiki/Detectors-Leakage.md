@@ -38,7 +38,7 @@ For panel data, [PNL002](Panel-Data#pnl002-cross-sectional-lookahead) adds a six
 
 Every leakage detector uses **Spearman** correlation or **AUC**, never Pearson. This is a deliberate decision and the single most important design choice in the library.
 
-Pearson correlation measures **linear** association. But the question these checks ask is not "is this relationship linear?" It is "does this feature *determine* the target?", a question about determinism, not linearity.
+Pearson correlation measures **linear** association. But the question these checks ask is not "is this relationship linear?" It is "does this feature *determine* the target?": a question about determinism, not linearity.
 
 The gap between those two questions is exactly where the OGDC bug lived.
 
@@ -50,7 +50,7 @@ When you compute Pearson correlation between a continuous feature and a **binary
 √(2/π) ≈ 0.798
 ```
 
-That ceiling applies **even when the feature perfectly determines the target**. A feature whose sign *defines* the label, `Direction = 1 if ChangeP > 0 else 0`, cannot score above about 0.8 in Pearson, no matter how perfect the relationship is.
+That ceiling applies **even when the feature perfectly determines the target**. A feature whose sign *defines* the label (`Direction = 1 if ChangeP > 0 else 0`) cannot score above about 0.8 in Pearson, no matter how perfect the relationship is.
 
 So a leakage detector with a sensible-looking Pearson threshold of 0.95, or even 0.85, would score the OGDC leak at ~0.77 and wave it through. Here is that failure, demonstrated:
 
@@ -77,6 +77,7 @@ A perfect, definitional leak scores 0.77. Under any reasonable Pearson threshold
 ---
 
 ## LEK001: Target equivalence
+
 ### What it detects
 
 A feature that near-deterministically reproduces the target at lag 0. The feature *is* the target, arrived at by a different route.
@@ -107,26 +108,26 @@ audit_equivalence(
 
 ### How it works
 
-**Step 1, classify the target.** Count distinct non-null values.
+**Step 1: classify the target.** Count distinct non-null values.
 
 - Fewer than 2 → return immediately. A constant target has nothing to reproduce.
 - Exactly 2 → **binary**. The two categories are sorted by their string form and mapped to 0.0 and 1.0, so this works for numeric `0/1` and categorical `"up"/"down"` alike.
 - More than 2 → **continuous**. Must be numeric, or `ValueError`.
 
-**Step 2, pick the metric.**
+**Step 2: pick the metric.**
 
 | Target type | Metric | Threshold |
 | ----------- | ------ | --------- |
 | Binary | AUC separation, `max(AUC, 1 - AUC)` | `binary_threshold` |
 | Continuous | \|Spearman ρ\| | `continuous_threshold` |
 
-**Step 3, score each numeric feature** against the target, using only pairwise-complete rows with `inf` treated as missing.
+**Step 3: score each numeric feature** against the target, using only pairwise-complete rows with `inf` treated as missing.
 
 **Understanding AUC here.** AUC is computed via the Mann-Whitney rank statistic, using average ranks so ties are handled correctly. It answers: *if I pick one random row where the target is 1 and one where it is 0, how often does the feature rank the class-1 row higher?*
 
-- **0.5**, no separation at all. The feature is useless, which is what an unrelated column looks like.
-- **1.0**, perfect separation. Every class-1 row outranks every class-0 row.
-- **0.0**, also perfect separation, just inverted.
+- **0.5**: no separation at all. The feature is useless, which is what an unrelated column looks like.
+- **1.0**: perfect separation. Every class-1 row outranks every class-0 row.
+- **0.0**: also perfect separation, just inverted.
 
 Because 0.0 is as damning as 1.0, the check uses `max(AUC, 1 - AUC)`, making it direction-agnostic. A perfectly inverted leak scores 1.0 and is caught.
 
@@ -139,7 +140,7 @@ Both metrics live on a comparable [0, 1] scale, which is why one threshold of 0.
 | Key | Meaning |
 | --- | ------- |
 | `metric` | `"auc"` |
-| `auc` | The raw AUC, before the `max()`: tells you the direction |
+| `auc` | The raw AUC, before the `max()`; tells you the direction |
 | `separation` | `max(auc, 1 - auc)`, the value compared against the threshold |
 | `threshold` | Threshold applied |
 | `target_type` | `"binary"` |
@@ -158,7 +159,7 @@ Both metrics live on a comparable [0, 1] scale, which is why one threshold of 0.
 ### When it does not fire
 
 - The target has fewer than 2 distinct non-null values
-- The feature has fewer than `min_obs` (default 30) pairwise-complete observations with the target, a high score from a handful of points is spurious
+- The feature has fewer than `min_obs` (default 30) pairwise-complete observations with the target: a high score from a handful of points is spurious
 - The feature is constant (zero variance)
 - The feature is non-numeric
 - For binary targets, only one class is present in the overlapping rows
@@ -199,13 +200,14 @@ ChangeP {'metric': 'auc', 'auc': 1.0, 'separation': 1.0, 'threshold': 0.95, 'tar
 
 **Only monotonic relationships are found.** A feature equal to `target²` on a symmetric range is perfectly deterministic but not monotonic, and Spearman will not see it.
 
-**Multi-feature leakage is not LEK001's job.** If no single column reproduces the target but a group of them together does, LEK001 stays silent by design, that is [LEK005](#lek005-combination-leakage).
+**Multi-feature leakage is not LEK001's job.** If no single column reproduces the target but a group of them together does, LEK001 stays silent by design; that is [LEK005](#lek005-combination-leakage).
 
 **`domain` does nothing.** It is accepted for signature consistency only.
 
 ---
 
 ## LEK002: Positive-lag correlation peak
+
 ### What it detects
 
 A feature whose correlation with the target is strongest at a **positive lag**, meaning it aligns better with the target's *future* than with its present.
@@ -217,7 +219,7 @@ audit_correlation_leakage(
     df: pd.DataFrame,
     target: str,
     max_lag: int = 10,
-    min_correlation: float = 0.5,
+    min_correlation: float = 0.1,
     min_obs: int = 30,
     domain: Optional[str] = None,
 ) -> List[Issue]
@@ -226,7 +228,7 @@ audit_correlation_leakage(
 | Parameter | Type | Default | What it does |
 | --------- | ---- | ------- | ------------ |
 | `max_lag` | `int` | `10` | Lags tested in each direction, so the search covers −10 to +10 |
-| `min_correlation` | `float` | `0.5` | The peak must reach this magnitude. Not a formality: see the limitation below |
+| `min_correlation` | `float` | `0.1` | The peak must reach this magnitude, so noise peaks are ignored |
 | `min_obs` | `int` | `30` | Minimum overlapping observations at a given lag for it to count |
 | `domain` | `str` or `None` | `None` | No effect |
 
@@ -256,7 +258,7 @@ The logic is straightforward: a legitimate feature carries information from the 
 
 ### When it does not fire
 
-- The peak occurs at lag 0 or a negative lag, the normal, healthy case
+- The peak occurs at lag 0 or a negative lag: the normal, healthy case
 - The peak magnitude is below `min_correlation`
 - Fewer than `min_obs` overlapping observations at every lag
 - The feature or target is constant over the overlapping subset
@@ -275,8 +277,8 @@ y   = pd.Series(rng.normal(0, 1, n), index=idx)
 
 df = pd.DataFrame({
     "y":           y,
-    "tomorrow_y":  y.shift(-1),   # tomorrow's target, available today, a leak
-    "yesterday_y": y.shift(1),    # yesterday's target, perfectly legitimate
+    "tomorrow_y":  y.shift(-1),   # tomorrow's target, available today: a leak
+    "yesterday_y": y.shift(1),    # yesterday's target: perfectly legitimate
 }, index=idx)
 
 for issue in audit_correlation_leakage(df, target="y"):
@@ -284,27 +286,16 @@ for issue in audit_correlation_leakage(df, target="y"):
 ```
 
 ```
-tomorrow_y {'peak_lag': 1, 'peak_correlation': 1.0, 'min_correlation': 0.5, 'max_lag': 10, 'metric': 'spearman'}
+tomorrow_y {'peak_lag': 1, 'peak_correlation': 1.0, 'min_correlation': 0.1, 'max_lag': 10, 'metric': 'spearman'}
 ```
 
-`tomorrow_y` is caught at exactly lag +1 with correlation 1.0. `yesterday_y`, which peaks at lag −1, is correctly ignored, using yesterday's value today is not leakage, it is just a lag feature.
+`tomorrow_y` is caught at exactly lag +1 with correlation 1.0. `yesterday_y`, which peaks at lag −1, is correctly ignored: using yesterday's value today is not leakage, it is just a lag feature.
 
 ### Limitations and false positives
 
 **This is a suspicion flag, not a proof, and the module says so in its own docstring.** In pure cross-correlation, a genuine strong predictor and a lookahead leak produce the same signature: a positive-lag peak. The only separator is magnitude. Real one-step-ahead predictive power in most domains is weak (|r| perhaps 0.05–0.2); leakage is strong (|r| above 0.5). Read `peak_correlation` and judge accordingly. This is why LEK002 is WARNING and not CRITICAL.
 
-**Autocorrelated targets create false peaks, and the effect is large.** If the target is strongly persistent, a feature correlated with `target_t` is automatically correlated with `target_{t+1}` too, and noise can push the peak a step into the future. LEK003 exists precisely to control for this.
-
-Measured over 100 trials per cell on 400-point series. Both columns are generated from *separate* draws, so every flag below is a false positive:
-
-| `min_correlation` | Two random walks | Two AR(0.98) | Genuine leak, i.i.d. target | Genuine leak, random-walk target |
-| ----------------- | ---------------- | ------------ | --------------------------- | -------------------------------- |
-| 0.1 (before 0.3.1) | 37% | 51% | 100% | 100% |
-| **0.5 (current default)** | **13%** | **8%** | **100%** | **100%** |
-
-Raising the gate cost no true positive in 200 trials, which is why the default changed. But 13% and 8% are still not small. **If your columns are price levels or other near-random-walk series, treat a lone LEK002 flag as weak evidence and check `peak_correlation` yourself.** LEK003 on the same data false-positives at 3% and 15%, so where the two disagree, trust LEK003.
-
-Why not require the positive-lag peak to beat the lag-0 correlation by a margin, as LEK003 effectively does? Because it does not work here. On a persistent target a genuine lookahead correlates with the target at lag 0 almost as strongly as at lag 1, so a flat margin suppresses real leaks along with false ones: a 0.10 margin cut false positives to 3% but dropped detection on a random-walk target from 100% to **0%**. LEK003 escapes this by dividing by the target's *measured* autocorrelation rather than subtracting a constant.
+**Autocorrelated targets create false peaks.** If the target is strongly persistent, a feature correlated with `target_t` is automatically correlated with `target_{t+1}` too, and noise can push the peak a step into the future. LEK003 exists precisely to control for this.
 
 **Only ±10 lags by default.** A leak at lag +15 is invisible unless you raise `max_lag`.
 
@@ -313,17 +304,18 @@ Why not require the positive-lag peak to beat the lag-0 correlation by a margin,
 ---
 
 ## LEK003: Lookahead beyond persistence
+
 ### What it detects
 
-A feature that correlates with the target's future **more strongly than the target's own persistence can explain**, the signature of a centered or forward-looking rolling window.
+A feature that correlates with the target's future **more strongly than the target's own persistence can explain**: the signature of a centered or forward-looking rolling window.
 
 ### The problem this solves
 
 Here is why a naive "does it correlate with the future?" test is useless on time-series data.
 
-Time-series targets are usually strongly autocorrelated. Today's price predicts tomorrow's price with correlation near 0.99, for no interesting reason, that is just what prices do.
+Time-series targets are usually strongly autocorrelated. Today's price predicts tomorrow's price with correlation near 0.99, for no interesting reason; that is just what prices do.
 
-Now take a perfectly honest trailing feature, say a 5-day trailing average. It tracks `target_t`. And `target_t` predicts `target_{t+1}` through sheer persistence. Therefore the honest feature correlates with `target_{t+1}` too, transitively, innocently.
+Now take a perfectly honest trailing feature, say a 5-day trailing average. It tracks `target_t`. And `target_t` predicts `target_{t+1}` through sheer persistence. Therefore the honest feature correlates with `target_{t+1}` too, transitively and innocently.
 
 A naive detector would flag every well-behaved feature you have.
 
@@ -366,7 +358,11 @@ audit_temporal_leakage(
 
 Both `excess_threshold` and `min_correlation` must be satisfied, so a large excess over a tiny baseline is not enough on its own.
 
-**Implementation note.** The target's autocorrelations do not depend on any feature, so the shifted target series and their persistence correlations are computed once before the per-feature loop rather than inside it.
+**Implementation note.** The shifted target series do not depend on any feature, so they're built once before the per-feature loop. A whole-series persistence correlation is also computed once, but only as a cheap pre-filter to skip a lag outright when even that loosest possible sample is too small; it is never used in the `expected(k)` math itself.
+
+**All three correlations are aligned to one common sample per feature and lag.** `corr(feature_t, target_t)`, `corr(target_t, target_{t+k})`, and `corr(feature_t, target_{t+k})` are computed on the rows where the feature, the target, and the lag-`k`-shifted target are all simultaneously non-null, not on three independently pairwise-complete samples. This matters whenever a feature has its own missingness, e.g. a column only recorded starting partway through the series (a new data source, a sensor installed later). The target's persistence can differ materially between the period the feature actually occupies and the series as a whole, and measuring it on the wrong population can either mask a real leak or, less often, flag an honest feature.
+
+Concretely: on a synthetic target with a genuine regime change (persistence 0.97 for the first half, 0.0 for the second) and a feature recorded only in the low-persistence half, persistence measured on the *whole* series comes out around 0.75; measured on just the feature's own rows, around 0.22. That gap is far larger than the default `excess_threshold` of 0.1. A real lag −1 leak planted in that feature scored an excess of only ~0.06 (unflagged) when persistence was measured on the whole series, versus ~0.14 (flagged, correctly) when aligned to the feature's own rows. Fully populated features are unaffected either way, since their aligned sample equals the whole series.
 
 ### Evidence
 
@@ -411,7 +407,7 @@ for issue in audit_temporal_leakage(df, target="y"):
 roll_centered {'lag': 1, 'observed_future_corr': 0.4128, 'excess_over_persistence': 0.4094, 'excess_threshold': 0.1, 'metric': 'spearman'}
 ```
 
-The centered window is caught; the trailing window is correctly ignored. The two features are otherwise identical, same input, same width, same aggregation. The only difference is `center=True`, and that is the entire bug.
+The centered window is caught; the trailing window is correctly ignored. The two features are otherwise identical: same input, same width, same aggregation. The only difference is `center=True`, and that is the entire bug.
 
 ### Why LEK002 misses this case
 
@@ -427,7 +423,7 @@ lag +2: +0.4204
 lag +3: -0.0249
 ```
 
-A 5-wide centered window spans two steps back and two steps forward, so its correlation profile is roughly symmetric. The peak lands at lag −2, which looks perfectly innocent to LEK002, it only fires on a *positive*-lag peak.
+A 5-wide centered window spans two steps back and two steps forward, so its correlation profile is roughly symmetric. The peak lands at lag −2, which looks perfectly innocent to LEK002: it only fires on a *positive*-lag peak.
 
 But the correlation of +0.4128 at lag **+1** is far above what persistence explains, because white noise has essentially zero autocorrelation. LEK003 sees that excess and flags it.
 
@@ -437,7 +433,7 @@ This is the clearest possible demonstration of why both checks exist. They are n
 
 **It produces false positives, and you should expect them.** In testing, a 11-wide *trailing* window on a white-noise target was flagged with an excess of 0.10, right at the threshold. The persistence baseline is itself an estimate, and estimation noise can push an honest feature over the line. Treat a small excess (near 0.1) as weak evidence and a large one (above 0.3) as strong.
 
-**Highly autocorrelated targets weaken the check.** When the target's persistence is near 1.0, `expected` is nearly as large as `observed` can be, so the excess is squeezed toward zero and real leaks can hide. On the random-walk version of the example above, a 5-wide centered window was **not** flagged, only wider ones were. Financial price levels are exactly this case; consider running the check on returns rather than levels.
+**Highly autocorrelated targets weaken the check.** When the target's persistence is near 1.0, `expected` is nearly as large as `observed` can be, so the excess is squeezed toward zero and real leaks can hide. On the random-walk version of the example above, a 5-wide centered window was **not** flagged: only wider ones were. Financial price levels are exactly this case; consider running the check on returns rather than levels.
 
 **Only 5 forward lags by default.** A window reaching 10 steps ahead may not be caught at `max_lag=5`.
 
@@ -446,6 +442,7 @@ This is the clearest possible demonstration of why both checks exist. They are n
 ---
 
 ## LEK004: As-of availability leakage
+
 ### What it detects
 
 A value sitting at a timestamp **earlier than the moment it was actually published**. Every row before the real release date consumes information that did not yet exist.
@@ -456,7 +453,7 @@ Many real-world series describe a *reference period* but become *available* late
 
 - **CPI** for January is published in mid-February
 - **Company earnings** for Q1 arrive weeks after Q1 ends
-- **Unemployment**, policy rates, GDP, all released on a delay
+- **Unemployment**, policy rates, GDP: all released on a delay
 - **News sentiment scores** are often computed and backfilled retroactively
 
 If such a value is aligned to its reference date and consumed at that timestamp, your backtest is trading on numbers nobody had yet.
@@ -485,7 +482,7 @@ audit_asof_leakage(
 
 ### Two ways to declare availability
 
-**A `pd.Timedelta`, a fixed publication lag.**
+**A `pd.Timedelta`: a fixed publication lag.**
 
 ```python
 available_at={"cpi": pd.Timedelta(days=30)}
@@ -493,13 +490,13 @@ available_at={"cpi": pd.Timedelta(days=30)}
 
 Availability becomes `row_timestamp + lag` for every row. Because the lag is positive and uniform, **every** row is a violation, which is the point. It catches the classic "I forgot to shift the macro series" bug in one line.
 
-**A `pd.Series`, real per-row publish timestamps.**
+**A `pd.Series`: real per-row publish timestamps.**
 
 ```python
 available_at={"cpi": actual_release_dates}   # must be indexed by df.index
 ```
 
-This is the general and correct form. Real release schedules are ragged, CPI is not published exactly 30 days later every month, and a Series captures that. Rows where the value was genuinely available produce no violation.
+This is the general and correct form. Real release schedules are ragged (CPI is not published exactly 30 days later every month), and a Series captures that. Rows where the value was genuinely available produce no violation.
 
 If the Series does not align with `df.index` at all, you get an explicit error rather than a silently empty result.
 
@@ -529,7 +526,7 @@ Then it reports the count, the maximum lookahead in days, and the earliest offen
 - Violations number fewer than `min_violations`
 - All values in the column are NaN
 
-Raises `ValueError` if the index is not a `DatetimeIndex`, if a listed column does not exist, if a Series fails to align, or if the spec is neither a Series nor a Timedelta.
+Raises `ValueError` if the index is not a `DatetimeIndex`, if a listed column does not exist, if a Series fails to align, if the spec is neither a Series nor a Timedelta, or if a Series spec's timezone awareness does not match `df.index`'s (one tz-aware, the other tz-naive). That last case used to fail as a raw `TypeError` from deep inside the internal `avail > idx` comparison, confusing for what is usually a mundane mistake (the index was `tz_localize`'d, the release-date metadata came from somewhere that wasn't). It now raises here, naming which side is tz-aware and which is tz-naive.
 
 ### Worked example
 
@@ -565,9 +562,10 @@ All 300 rows are violations, because the column sits at reference dates while th
 ---
 
 ## LEK005: Combination leakage
+
 ### What it detects
 
-A **group of two or three** features that together reconstruct the target, while none does alone, additively (sums, differences) or multiplicatively (products, ratios).
+A **group of two or three** features that together reconstruct the target, while none does alone: additively (sums, differences) or multiplicatively (products, ratios).
 
 ### The problem
 
@@ -583,7 +581,7 @@ target = a + b + c
 
 No input is near-deterministic by itself, so LEK001 stays silent, but the group rebuilds the target exactly.
 
-The canonical shape is a **difference**. If `x1` and `x2` are independent with similar variance and `target = x1 - x2`, each correlates with the target at only about 0.7, far below LEK001's 0.95 threshold, while the pair explains it perfectly.
+The canonical shape is a **difference**. If `x1` and `x2` are independent with similar variance and `target = x1 - x2`, each correlates with the target at only about 0.7 (far below LEK001's 0.95 threshold) while the pair explains it perfectly.
 
 **This is not hypothetical.** In the OGDC file, `MACD_hist` is exactly `MACD - MACD_signal` (verified to 3e-15). Point `target="MACD_hist"` at tsauditor and LEK005 reports an adjusted R² of 1.0000 for that pair, where the best *single* column reaches only 0.12.
 
@@ -612,14 +610,14 @@ audit_combination_leakage(
 | `max_reported` | `10` | Cap on findings, best first, so a family of derived columns can't flood the report |
 | `max_group_size` | `3` | Largest group searched. `2` = pairs only; raise to `4`+ for larger identities. |
 | `gate` | `0.30` | Adjusted R² a group must reach before it is extended by another column |
-| `max_candidates_per_level` | `200` | Cap on groups carried to the next level, best first: bounds cost |
+| `max_candidates_per_level` | `200` | Cap on groups carried to the next level, best first; bounds cost |
 
 ### How it works
 
 For a candidate group, fit `target ~ 1 + columns` by ordinary least squares and take the **adjusted** R². Two algebraic forms are tried:
 
-- **linear**, catches sums, differences and weighted combinations
-- **log**, the same fit on `log` of the **absolute** target and columns, which catches **products and ratios**, since `log(a*b) = log a + log b`. Absolute values mean *signed* products and ratios are recovered too (`|a*b| = |a|*|b|`). Skipped when any value touches zero, since `log` of a near-zero would dominate the fit.
+- **linear**: catches sums, differences and weighted combinations
+- **log**: the same fit on `log` of the **absolute** target and columns, which catches **products and ratios**, since `log(a*b) = log a + log b`. Absolute values mean *signed* products and ratios are recovered too (`|a*b| = |a|*|b|`). Skipped when any value touches zero, since `log` of a near-zero would dominate the fit.
 
 Measured coverage (adjusted R², n=500):
 
@@ -638,13 +636,13 @@ The form used is reported in `evidence["form"]`.
 
 Adjusted rather than raw R² is used because it penalises extra predictors, keeping the null distribution tight across many candidate groups.
 
-`lstsq` (pseudo-inverse) is used rather than a normal-equation solve because candidate groups are frequently collinear, `high`/`low`, a level and its lag, which would make `X'X` singular.
+`lstsq` (pseudo-inverse) is used rather than a normal-equation solve because candidate groups are frequently collinear (`high`/`low`, a level and its lag), which would make `X'X` singular.
 
 ### Larger groups, without paying O(k^n)
 
-Scanning every triple would be C(k,3) fits, 161,700 for 100 features, and quadruples are worse. Both would badly inflate the multiple-comparison problem.
+Scanning every triple would be C(k,3) fits: 161,700 for 100 features, and quadruples are worse. Both would badly inflate the multiple-comparison problem.
 
-Instead the search **deepens iteratively**. A group is extended by one more column only when it reaches `gate` without reaching the flagging threshold, that is exactly the signature of a sub-group of a larger identity:
+Instead the search **deepens iteratively**. A group is extended by one more column only when it reaches `gate` without reaching the flagging threshold: that is exactly the signature of a sub-group of a larger identity:
 
 | true identity | best sub-group score | clears the 0.30 gate? |
 | ------------- | -------------------- | --------------------- |
@@ -661,7 +659,7 @@ audit_combination_leakage(df, target="y", max_group_size=4)
 
 It is not the default because each level is free on *clean* data but costs time on frames where many features partially explain the target. `max_candidates_per_level` (default 200) bounds that: without it, 40 mutually correlated features took **21s** at depth 4; with it, **0.7s**. The trade-off is that in such a frame a genuine identity outside the top 200 sub-groups could be missed.
 
-A group is not reported when a subset of it was already reported, that would be the same finding with a redundant column attached.
+A group is not reported when a subset of it was already reported; that would be the same finding with a redundant column attached.
 
 ### The single-feature guard
 
@@ -669,9 +667,11 @@ A pair is **skipped when either column alone already reaches the threshold.**
 
 Without this, one leaky column poisons the whole report: if `leak` alone reproduces the target, then every pair containing `leak` also hits R² 1.0, producing k−1 findings for something LEK001 already reported once. That case belongs to LEK001; LEK005 is only for leakage that emerges from the *combination*.
 
+**"Already reaches the threshold" is checked by two metrics, not one.** The guard takes the max of this module's own adjusted R² *and* LEK001's own equivalence score (AUC for a binary target, Spearman for continuous) for each column. Relying on R² alone used to miss exactly the case LEK001 exists for: a strong monotonic but non-linear relationship scores near 1.0 on AUC/Spearman while sitting well below LEK005's threshold on adjusted R². A column already caught by LEK001 under that circumstance could slip past an R²-only guard and get reported a second time inside a LEK005 group, with the finding's own description claiming that none of the group's columns explains the target alone: true under R², false under LEK001's own metric, on the same data, in the same scan. `best_single_adjusted_r2` in the evidence below still reports the pure R² value; only the *skip decision* considers both metrics.
+
 ### When it does not fire
 
-- Either column alone already explains the target (LEK001's job)
+- Either column alone already explains the target by either metric: this module's adjusted R², or LEK001's own AUC/Spearman score (LEK001's job either way)
 - Fewer than `min_obs` complete rows for the pair
 - The target is constant, non-numeric, or absent
 - Fewer than two usable numeric features
@@ -721,7 +721,7 @@ c = rng.uniform(2, 10, n)
 | `a * b` | `['a', 'b']` | **log** | 1.0 |
 | `a / b` | `['a', 'b']` | **log** | 1.0 |
 | `a + b + c` | `['a', 'b', 'c']` | linear | 1.0 |
-| unrelated control |: |: | no finding |
+| unrelated control | N/A | N/A | no finding |
 
 ### Limitations and false positives
 
@@ -729,9 +729,9 @@ c = rng.uniform(2, 10, n)
 
 **False-positive profile is good, and was measured.** On random targets with independent random features, the largest adjusted R² reached by chance was **0.075** for pairs (50 features, 1,225 pairs, 100 rows), typically below 0.03; the log form behaves the same (max 0.028). No triple is ever evaluated on random data, because no pair clears the gate. Innocent but highly collinear pairs (r ≈ 0.96) score ~0.00 against an unrelated target. A real 24-column financial dataset produced zero findings for its actual target.
 
-**Additive and multiplicative only.** Between the linear and log forms this covers sums, differences, products and ratios, signed or not. Genuinely non-monotonic constructions, `target = x1² + sin(x2)`, are not found, and would require either a fitted model or a guessed basis expansion; both would cost the library its "no model, no hyperparameters" property.
+**Additive and multiplicative only.** Between the linear and log forms this covers sums, differences, products and ratios, signed or not. Genuinely non-monotonic constructions (`target = x1² + sin(x2)`) are not found, and would require either a fitted model or a guessed basis expansion; both would cost the library its "no model, no hyperparameters" property.
 
-**The log form needs values away from zero.** Signed data is fine, absolute values are used, but a column containing an exact zero falls back to the linear form, so a product involving it may be missed.
+**The log form needs values away from zero.** Signed data is fine (absolute values are used), but a column containing an exact zero falls back to the linear form, so a product involving it may be missed.
 
 **Cost is O(k²) for the pair scan.** About 0.27s for 100 features, 0.07s for 50. With several hundred columns, set `max_features`. Triples add essentially nothing on clean data.
 
@@ -748,7 +748,7 @@ c = rng.uniform(2, 10, n)
 | LEK001 | **Very high** | An AUC of 1.0 or ρ of 0.99 is not a judgement call. Investigate immediately. |
 | LEK005 | **Very high** | An adjusted R² near 1.0 with a low best-single score is an arithmetic identity, not a coincidence. |
 | LEK004 | **High**, conditional on your metadata | The logic is deterministic; only your `available_at` can be wrong. |
-| LEK002 | **Medium** | Read `peak_correlation`. Above 0.7 is alarming; near the 0.5 gate is weak evidence, especially on price-level columns. |
+| LEK002 | **Medium** | Read `peak_correlation`. Above 0.5 is alarming; near 0.1 is probably noise. |
 | LEK003 | **Medium** | Read `excess_over_persistence`. Above 0.3 is strong; near 0.1 may be estimation noise. |
 
 **Remaining gaps.** LEK001–LEK004 are univariate. LEK005 covers groups of two or three by default (raise `max_group_size` for more), additive and multiplicative, signed or not, but not non-monotonic constructions like `x1² + sin(x2)`. For panel data, [PNL002](Panel-Data#pnl002-cross-sectional-lookahead) covers leaks living between entities. `tsauditor` reduces your risk substantially; it does not eliminate it.

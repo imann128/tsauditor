@@ -86,3 +86,77 @@ def test_polars_panel_scan_with_group_col():
     assert report.metadata["n_groups"] == 3
     assert report.groups() == ["AAA", "BBB", "CCC"]
     assert "ret" in report.leaky_columns()
+
+
+# ── fix() / apply_fixes() with polars input ────────────────────────────────
+#
+# polars.DataFrame has neither .copy() nor .index, so apply_fixes's very
+# first operation on a polars frame raised a raw AttributeError. scan() has
+# supported polars since it was added; fix()/apply_fixes() never did, and
+# nothing caught it because every test above only ever exercises scan().
+
+
+def test_fix_accepts_polars_input():
+    """Regression. tsa.fix(polars_df, time_col=...) used to raise AttributeError
+    ('DataFrame' object has no attribute 'copy'/'index') before ever reaching
+    the repair logic."""
+    n = 100
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    vals = np.arange(n, dtype=float)
+    vals[40:50] = np.nan
+    pl_df = pl.DataFrame({"date": dates, "x": vals})
+
+    clean, report = tsa.fix(pl_df, time_col="date", missing="interpolate")
+    assert isinstance(clean, pd.DataFrame)  # polars is input-only; output stays pandas
+    assert clean["x"].isna().sum() == 0
+    assert list(clean.columns) == ["date", "x"]
+
+
+def test_apply_fixes_accepts_polars_input_directly():
+    """Same regression, called via report.apply_fixes() rather than fix()."""
+    n = 100
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    vals = np.arange(n, dtype=float)
+    vals[40:50] = np.nan
+    pl_df = pl.DataFrame({"date": dates, "x": vals})
+
+    report = tsa.scan(pl_df, time_col="date")
+    clean = report.apply_fixes(pl_df, missing="interpolate")
+    assert isinstance(clean, pd.DataFrame)
+    assert clean["x"].isna().sum() == 0
+
+
+def test_fix_polars_input_composes_with_shuffled_rows_and_group_col():
+    """
+    Regression. The polars conversion must happen before -- and compose
+    correctly with -- the row-order sort-safety and panel (group_col)
+    repair paths, not just work in isolation on a trivial single-series
+    frame.
+    """
+    n = 200
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    rng = np.random.default_rng(0)
+    vals = rng.normal(0, 1, n)
+    vals[50:58] = 5.0  # 8-point stuck run, chronological
+    pd_sorted = pd.DataFrame({"date": dates, "x": vals})
+    pd_shuffled = pd_sorted.sample(frac=1.0, random_state=3).reset_index(drop=True)
+    pl_shuffled = pl.from_pandas(pd_shuffled)
+
+    clean, report = tsa.fix(
+        pl_shuffled, time_col="date", missing=None, outliers=None, stuck="nan"
+    )
+    assert clean["x"].isna().sum() == 8
+
+    # group_col combined with polars + time_col
+    dates2 = pd.date_range("2024-01-01", periods=60, freq="D")
+    panel = pd.concat(
+        [
+            pd.DataFrame({"date": dates2, "ticker": "AAA", "x": np.arange(60.0)}),
+            pd.DataFrame({"date": dates2, "ticker": "BBB", "x": np.arange(60.0) * 2}),
+        ]
+    )
+    clean2, report2 = tsa.fix(
+        pl.from_pandas(panel), time_col="date", group_col="ticker"
+    )
+    assert report2.is_panel
+    assert len(clean2) == len(panel)

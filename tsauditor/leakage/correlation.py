@@ -46,6 +46,7 @@ import pandas as pd
 
 from tsauditor.leakage._common import encode_target as _encode_target
 from tsauditor.report.summary import Issue, WARNING
+from tsauditor.utils.validation import ensure_sorted_datetime_index
 
 
 def _align(a: np.ndarray, b: np.ndarray, tau: int):
@@ -120,6 +121,11 @@ def audit_correlation_leakage(
 
     if target not in df.columns:
         raise ValueError(f"target '{target}' not found in DataFrame columns.")
+
+    # The lag search below is positional (_align slices by integer offset),
+    # so an out-of-order-but-valid DatetimeIndex silently produces wrong
+    # lags rather than an error. See ensure_sorted_datetime_index's docstring.
+    df = ensure_sorted_datetime_index(df, "audit_correlation_leakage")
 
     y = _encode_target(df[target], target)
     if y.dropna().nunique() < 2:

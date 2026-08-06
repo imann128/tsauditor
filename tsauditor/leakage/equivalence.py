@@ -67,6 +67,59 @@ def _auc(feature: pd.Series, y01: np.ndarray) -> Optional[float]:
     return (rank_sum_pos - n1 * (n1 + 1) / 2) / (n1 * n0)
 
 
+def _score_feature(
+    x: pd.Series, y: pd.Series, target_type: str, min_obs: int
+) -> Optional[dict]:
+    """
+    LEK001's own equivalence score for one feature against an already-encoded
+    target ("auc" separation for binary, absolute Spearman for continuous).
+
+    Returns a dict with "score" plus the raw per-metric fields used in
+    LEK001's evidence, or ``None`` if there isn't enough data to score.
+
+    Shared with combination.py's single-feature guard, which used to derive
+    "does this column already explain the target alone" from a completely
+    different metric (adjusted R^2 of a linear/log OLS fit). The two
+    disagreed hardest on exactly the case LEK001 exists for — a strong
+    monotonic but non-linear relationship (Spearman/AUC near 1.0, R^2 well
+    below 0.95) — which let a column LEK001 already flagged slip past the
+    guard and get reported a second time inside a LEK005 group, with a
+    description claiming "none [of these columns] does [explain the target]
+    alone." That claim was true under R^2 and false under this module's own
+    metric, on the same data, in the same scan.
+    """
+    pair = (
+        pd.concat([x, y], axis=1, keys=["x", "y"])
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    if len(pair) < min_obs or pair["x"].nunique() < 2:
+        return None
+
+    if target_type == "binary":
+        auc = _auc(pair["x"], pair["y"].to_numpy())
+        if auc is None:
+            return None  # only one class present here
+        score = max(auc, 1.0 - auc)  # direction-agnostic separation
+        return {
+            "score": score,
+            "metric": "auc",
+            "auc": round(float(auc), 4),
+            "separation": round(float(score), 4),
+            "n_obs": int(len(pair)),
+        }
+
+    rho = pair["x"].corr(pair["y"], method="spearman")
+    if pd.isna(rho):
+        return None
+    return {
+        "score": abs(float(rho)),
+        "metric": "spearman",
+        "spearman_rho": round(float(rho), 4),
+        "n_obs": int(len(pair)),
+    }
+
+
 def audit_equivalence(
     df: pd.DataFrame,
     target: str,
@@ -174,45 +227,11 @@ def audit_equivalence(
         if col == target:
             continue
 
-        # Pairwise-complete observations only; treat inf as missing.
-        pair = (
-            pd.concat([df[col], y], axis=1, keys=["x", "y"])
-            .replace([np.inf, -np.inf], np.nan)
-            .dropna()
-        )
-        if len(pair) < min_obs:
+        result = _score_feature(df[col], y, target_type, min_obs)
+        if result is None:
             continue
-
-        # A zero-variance feature cannot reproduce anything; its score is
-        # undefined (constant ranks). Skip.
-        if pair["x"].nunique() < 2:
-            continue
-
-        if target_type == "binary":
-            auc = _auc(pair["x"], pair["y"].to_numpy())
-            if auc is None:
-                continue  # only one class present here
-            score = max(auc, 1.0 - auc)  # direction-agnostic separation
-            evidence = {
-                "metric": "auc",
-                "auc": round(float(auc), 4),
-                "separation": round(float(score), 4),
-                "threshold": threshold,
-                "target_type": target_type,
-                "n_obs": int(len(pair)),
-            }
-        else:
-            rho = pair["x"].corr(pair["y"], method="spearman")
-            if pd.isna(rho):
-                continue
-            score = abs(float(rho))
-            evidence = {
-                "metric": "spearman",
-                "spearman_rho": round(float(rho), 4),
-                "threshold": threshold,
-                "target_type": target_type,
-                "n_obs": int(len(pair)),
-            }
+        score = result.pop("score")
+        evidence = {**result, "threshold": threshold, "target_type": target_type}
 
         if score >= threshold:
             issues.append(

@@ -71,6 +71,36 @@ def test_non_datetime_index_raises_value_error():
         audit_contextual_anomalies(df_bad_index, domain="finance")
 
 
+def test_shuffled_but_valid_index_still_finds_the_stuck_run():
+    """
+    Regression (full-sweep finding). Row-order dependence: stuck-run
+    detection walks consecutive rows. Before audit_contextual_anomalies
+    sorted its own input, a caller who passed rows out of chronological
+    order (still a valid, non-duplicate DatetimeIndex -- e.g. from a
+    concatenation or a shuffled read) got no ANO001 finding at all, with no
+    error, even though the exact same rows in time order trip it cleanly.
+    """
+    dates = pd.date_range("2024-01-01", periods=200, freq="D")
+    rng = np.random.default_rng(0)
+    vals = rng.normal(0, 1, 200)
+    vals[50:58] = 5.0  # 8-point stuck run
+    df_sorted = pd.DataFrame({"x": vals}, index=dates)
+    df_shuffled = df_sorted.sample(frac=1.0, random_state=3)
+
+    sorted_issues = [
+        i for i in audit_contextual_anomalies(df_sorted) if i.code == "ANO001"
+    ]
+    shuffled_issues = [
+        i for i in audit_contextual_anomalies(df_shuffled) if i.code == "ANO001"
+    ]
+    assert len(sorted_issues) == 1
+    assert len(shuffled_issues) == 1
+    assert (
+        shuffled_issues[0].evidence["max_stuck_duration"]
+        == sorted_issues[0].evidence["max_stuck_duration"]
+    )
+
+
 def test_local_spike_fails_global_zscore(clean_financial_df):
     """
     Case 6 — Spike that wouldn't trigger global z-score -> ANO003 only.
@@ -151,6 +181,51 @@ def test_interpolate_limit_does_not_bridge_wide_gaps_in_a_stuck_run():
         df, handle_missing="interpolate", stuck_window=15
     )
     assert [i for i in issues if i.code == "ANO001"] == []
+
+
+def test_single_row_gap_bridges_a_stuck_run_regardless_of_handle_missing():
+    """
+    Regression. A single dropout inside an otherwise-flat run used to split
+    it into two groups via diff()'s NaN handling (NaN reads as "changed" at
+    both the gap row and the row immediately after it, since `1 - NaN` is
+    also NaN). Two 5-long halves either side of one gap never crossed
+    stuck_window=5, even though the true, uninterrupted run is 10 long.
+
+    This must now fire under the *default* handle_missing="strict" -- the
+    bridge is about what "stuck" means, not an opt-in the caller has to know
+    to request.
+    """
+    values = np.concatenate([np.full(5, 1.0), [np.nan], np.full(5, 1.0)])
+    df = pd.DataFrame({"x": values}, index=_idx(len(values)))
+
+    issues = audit_contextual_anomalies(df, stuck_window=5)
+    stuck = [i for i in issues if i.code == "ANO001"]
+
+    assert len(stuck) == 1
+    assert stuck[0].evidence["max_stuck_duration"] == 11
+
+
+def test_gap_between_different_values_still_breaks_the_run():
+    """
+    The bridge must never mask a genuine transition. A gap sitting between
+    two *different* values interpolates to something between them, which
+    still registers as a change on both sides -- this is what keeps the
+    ANO001 fix from merging two unrelated flat segments just because a NaN
+    happens to sit between them.
+    """
+    values = np.concatenate(
+        [np.full(5, 1.0), [np.nan], np.full(5, 9.0)]  # different plateau after the gap
+    )
+    df = pd.DataFrame({"x": values}, index=_idx(len(values)))
+
+    issues = audit_contextual_anomalies(df, stuck_window=4)
+    stuck = [i for i in issues if i.code == "ANO001"]
+
+    # Each 5-long plateau exceeds stuck_window=4 on its own -- two separate
+    # findings (or one Issue reporting the longer of the two), never one
+    # merged 11-long run spanning both values.
+    assert stuck != []
+    assert all(i.evidence["max_stuck_duration"] <= 5 for i in stuck)
 
 
 def test_spike_zscore_boundary_is_strictly_greater_than():

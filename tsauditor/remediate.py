@@ -18,10 +18,15 @@ Design guarantees
   (``report.last_fixes``) recording every column touched and how many cells
   changed.
 
-Outlier and stuck-value masks are recomputed here using the *same* formulas as
-the detectors (``anomaly/point.py`` ANO002, ``anomaly/contextual.py`` ANO001).
-They are intentionally kept in lockstep; ``tests/test_fix.py`` asserts the
-outlier cell count matches the detector's own evidence so the two cannot drift.
+Outlier, stuck-value, and spike masks are computed here via the *same*
+functions the detectors use (``anomaly/point.py`` ANO002,
+``anomaly/contextual.py`` ANO001/ANO003), imported from
+``tsauditor.anomaly._common``. Detection and repair share one copy of every
+threshold preset and every masking formula, so they cannot drift apart --
+this used to be a set of hand-maintained duplicates connected only by
+comments, which drifted out of sync at least once in practice; see
+CHANGELOG [0.5.0] for the incident and ``tsauditor/anomaly/_common.py``
+for the shared implementation.
 """
 
 from __future__ import annotations
@@ -31,105 +36,29 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from tsauditor.anomaly._common import (
+    zscore_preset,
+    stuck_window_preset,
+    spike_threshold_preset,
+    zscore_iqr_masks,
+    clip_bounds,
+    stuck_run_mask,
+    spike_bounds,
+    SPIKE_WINDOW,
+)
+from tsauditor.utils.validation import _is_polars, _polars_to_pandas
+
 _MISSING_METHODS = {"interpolate", "ffill", "bfill", None}
 _OUTLIER_METHODS = {"clip", "nan", "drop", None}
 _STUCK_METHODS = {"nan", None}
 _LEAKAGE_METHODS = {"drop", None}
 
 
-# ── threshold resolvers (mirror the detectors' domain defaults) ───────────────
-
-
-def _zscore_threshold(domain: Optional[str]) -> float:
-    """Match anomaly/point.py ANO002."""
-    if domain == "finance":
-        return 5.0
-    if domain == "sensor":
-        return 3.5
-    return 4.0
-
-
-def _stuck_window(domain: Optional[str]) -> int:
-    """Match anomaly/contextual.py ANO001."""
-    if domain == "sensor":
-        return 3
-    return 5
-
-
-def _spike_threshold(domain: Optional[str]) -> float:
-    """Match anomaly/contextual.py ANO003."""
-    if domain == "finance":
-        return 4.0
-    if domain == "sensor":
-        return 3.0
-    return 3.5
-
-
-_SPIKE_WINDOW = 21  # contextual window, matches anomaly/contextual.py ANO003
-
-
-# ── mask / bound helpers ──────────────────────────────────────────────────────
-
-
 def _outlier_mask(values: pd.Series, z_thresh: float) -> pd.Series:
-    """Combined z-score OR IQR outlier mask, identical to ANO002."""
-    mean, std = values.mean(), values.std()
-    if std == 0 or pd.isna(std):
-        return pd.Series(False, index=values.index)
-    z = (values - mean) / std
-    z_mask = z.abs() > z_thresh
-    q25, q75 = values.quantile([0.25, 0.75])
-    iqr = q75 - q25
-    iqr_mask = (values < q25 - 1.5 * iqr) | (values > q75 + 1.5 * iqr)
+    """Combined z-score OR IQR outlier mask -- thin wrapper over the shared
+    ANO002 mask, which also detects the degenerate (zero-variance) case."""
+    z_mask, iqr_mask, _, _ = zscore_iqr_masks(values, z_thresh)
     return z_mask | iqr_mask
-
-
-def _clip_bounds(values: pd.Series, z_thresh: float) -> tuple:
-    """
-    Winsorization bounds = the region a point must be in to be flagged by
-    *neither* method: the intersection of the z-band and the IQR fence.
-    Clipping to [L, U] pulls in exactly the flagged outliers and leaves every
-    inlier untouched.
-    """
-    mean, std = values.mean(), values.std()
-    q25, q75 = values.quantile([0.25, 0.75])
-    iqr = q75 - q25
-    lower = max(mean - z_thresh * std, q25 - 1.5 * iqr)
-    upper = min(mean + z_thresh * std, q75 + 1.5 * iqr)
-    return lower, upper
-
-
-def _stuck_mask(series: pd.Series, window: int) -> pd.Series:
-    """Run-length stuck-value mask, identical to ANO001."""
-    diffs = series.diff().ne(0).cumsum()
-    counts = series.groupby(diffs).transform("count")
-    return (counts > window) & series.notna()
-
-
-def _spike_info(values: pd.Series, window: int, threshold: float):
-    """
-    Contextual-spike mask plus the local clip band, identical to ANO003: each
-    point is compared to the mean/std of its surrounding window *excluding
-    itself*. Returns (mask, lower, upper) where [lower, upper] is the local
-    acceptable band (local_mean ± threshold·local_std); clipping a flagged
-    point to it pulls it back to the edge of its own neighbourhood.
-    """
-    sq = values.pow(2)
-    mp = max(3, window // 2)
-    roll = values.rolling(window=window, center=True, min_periods=mp)
-    roll_sq = sq.rolling(window=window, center=True, min_periods=mp)
-    n_excl = roll.count() - 1
-    local_mean = (roll.sum() - values) / n_excl
-    local_var = (roll_sq.sum() - sq) / n_excl - local_mean.pow(2)
-    local_std = np.sqrt(local_var.clip(lower=0))
-    deviation = (values - local_mean).abs()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        z = deviation / local_std
-    flat = (local_std == 0) & (deviation > 0) & (n_excl >= 2)
-    mask = ((z > threshold) | flat).fillna(False)
-    lower = local_mean - threshold * local_std
-    upper = local_mean + threshold * local_std
-    return mask, lower, upper
 
 
 def _impute(series: pd.Series, method: str, datetime_index: bool) -> pd.Series:
@@ -199,13 +128,52 @@ def apply_fixes(
                 f"{name}={value!r} is invalid; choose one of {sorted(str(a) for a in allowed)}."
             )
 
+    time_col = report.metadata.get("time_col")
+
+    # polars input was never actually reachable through apply_fixes()/fix():
+    # polars.DataFrame has neither .copy() nor .index, so the very first
+    # line below (`out = df.copy()`, or the isinstance(df.index, ...) check
+    # further down) raised AttributeError immediately -- this predates every
+    # other fix in this function; test_polars.py only ever exercised scan(),
+    # never fix()/apply_fixes(), so the gap had no coverage on either side.
+    # Converted here the same way validate_dataframe does at the scan()
+    # boundary: internals stay pandas, and so does the return value --
+    # apply_fixes has never returned anything polars-shaped, and scan()
+    # itself only ever produces a plain GuardReport regardless of input
+    # type, so a pandas return here is consistent with the existing
+    # boundary, not a new inconsistency.
+    if _is_polars(df):
+        df = _polars_to_pandas(df, time_col)
+
+    # Resolve time_col the same way scan()'s validate_dataframe does, so a
+    # caller who used scan(df, time_col=...) and now calls
+    # report.apply_fixes(df) (or tsa.fix(df, time_col=...)) gets a
+    # correctly time-ordered repair -- not one silently computed on
+    # whatever row order the raw time_col *column* happened to be in.
+    # Without this, df.index is a meaningless RangeIndex (or whatever
+    # index the caller's own df had), so the DatetimeIndex sort-safety
+    # further below never engages at all for time_col callers: the exact
+    # same "found the issue, repaired zero cells" failure as an
+    # out-of-order DatetimeIndex, just reached through time_col instead of
+    # a pre-set index. Restored to the caller's original shape (time_col
+    # back as a plain column, not the index) before returning.
+    restore_time_col = (
+        time_col is not None
+        and time_col in df.columns
+        and not isinstance(df.index, pd.DatetimeIndex)
+    )
+    if restore_time_col:
+        df = df.copy()
+        df[time_col] = pd.to_datetime(df[time_col])
+        df = df.set_index(time_col)
+
     # Panel data must be repaired entity by entity. Interpolating an interleaved
     # frame carries one entity's values across into another's gaps: measured on a
     # two-entity panel, a gap in a series sitting near 10 was filled with ~1000
     # from the other entity. See _apply_fixes_by_group.
     group_col = report.metadata.get("group_col")
     if group_col is not None and group_col in df.columns:
-        return _apply_fixes_by_group(
+        out = _apply_fixes_by_group(
             report,
             df,
             group_col=group_col,
@@ -215,13 +183,41 @@ def apply_fixes(
             leakage=leakage,
             verbose=verbose,
         )
+        return out.reset_index() if restore_time_col else out
+
+    # scan() validates and sorts its own working copy before running any
+    # detector (see utils.validation.ensure_sorted_datetime_index) -- but
+    # `report` only carries the resulting Issues, not that sorted frame.
+    # `df` here is whatever the caller passed to fix()/apply_fixes(),
+    # completely independent of what scan() saw. If the caller's `df` has a
+    # valid DatetimeIndex that is out of chronological order, every mask
+    # this function computes below (stuck_run_mask's consecutive-run walk,
+    # spike_bounds' rolling window) previously ran on that unsorted order
+    # directly and could find nothing at all, even for a column the report
+    # says was flagged -- repairing zero cells while report.last_fixes and
+    # the caller both believe the data was cleaned. Restore chronological
+    # order via position (not `.sort_index()` + relabel) specifically so a
+    # duplicate timestamp -- already its own separate CRITICAL PRF004
+    # finding -- does not turn the final reordering into an ambiguous
+    # label-based reindex; and restore the caller's original row order
+    # before returning, both so the "byte-for-byte unchanged" guarantee for
+    # untouched columns holds in the caller's own row order, and because
+    # `_apply_fixes_by_group` writes this function's per-entity result back
+    # by raw position and requires the row order to match what it passed in.
+    datetime_index = isinstance(df.index, pd.DatetimeIndex)
+    restore_positions: Optional[np.ndarray] = None
+    if datetime_index:
+        sort_positions = np.argsort(df.index.values, kind="mergesort")
+        if not np.array_equal(sort_positions, np.arange(len(df))):
+            restore_positions = np.empty_like(sort_positions)
+            restore_positions[sort_positions] = np.arange(len(sort_positions))
+            df = df.iloc[sort_positions]
 
     out = df.copy()
     domain = report.metadata.get("domain")
     # Never repair the target column (the label): binary targets trip ANO001,
     # and interpolating a 0/1 label into fractions is wrong.
     protected = report.metadata.get("target")
-    datetime_index = isinstance(out.index, pd.DatetimeIndex)
     log: List[Dict[str, Any]] = []
 
     def _flagged(*codes: str) -> List[str]:
@@ -252,14 +248,30 @@ def apply_fixes(
                 )
 
     # 2. Outliers — clip to bounds, or NaN-out for imputation.
+    #
+    # Every mask/bounds computation below reads from `df[col]` (the pristine,
+    # pre-repair column), never `out[col]`. A column can carry more than one
+    # finding (e.g. ANO002 and ANO003, or ANO002 and ANO001 -- a value stuck
+    # at an extreme constant is both a global outlier and a stuck run), and
+    # these steps run in a fixed order. Reading `out[col]` meant a later
+    # step's detection ran on a column an earlier step had already clipped or
+    # NaN-ed, which could silently change what that later step found: the
+    # nan branches could rediscover nothing for cells an earlier step already
+    # NaN-ed (so the change log wrongly credited only the first action, even
+    # though the audit had raised both), and the local rolling stats behind
+    # ANO003's spike detection could shift for *unrelated* nearby cells once
+    # an earlier clip altered a value inside their rolling window. Detecting
+    # against the same pristine input the original audit scored means a
+    # later step here always finds exactly what its own Issue reported,
+    # regardless of what an earlier step already touched.
     if outliers is not None:
-        z_thresh = _zscore_threshold(domain)
+        z_thresh = zscore_preset(domain)
         for col in outlier_cols:
             if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
                 continue
-            values = out[col].dropna()
+            values = df[col].dropna()
             if outliers == "clip":
-                lower, upper = _clip_bounds(values, z_thresh)
+                lower, upper = clip_bounds(values, z_thresh)
                 clipped = out[col].clip(lower=lower, upper=upper)
                 n = int(((out[col] != clipped) & out[col].notna()).sum())
                 out[col] = clipped
@@ -274,24 +286,40 @@ def apply_fixes(
             else:  # "nan" / "drop"
                 mask = _outlier_mask(values, z_thresh)
                 idx = mask[mask].index
+                if len(idx) == 0:
+                    continue
+                # cells_changed counts only cells this step actually flips
+                # to NaN for the first time, so summing cells_changed across
+                # the whole log never double-counts a cell two detectors
+                # both flagged. already_nan records the rest -- cells this
+                # detector's own mask covers but an earlier step (e.g. a
+                # value that is both a stuck run and a global outlier) had
+                # already NaN-ed -- so the log still shows ANO002 fired on
+                # them even though this specific action changed nothing.
+                # Always logged when the mask fires, even at cells_changed=0,
+                # so provenance for every contributing detector survives,
+                # not just whichever ran first.
+                already_nan = int(out.loc[idx, col].isna().sum())
+                newly = int(len(idx) - already_nan)
                 out.loc[idx, col] = np.nan
                 nan_filled_cols.add(col)
                 log.append(
                     {
                         "column": col,
                         "action": "outliers_to_nan",
-                        "cells_changed": int(len(idx)),
+                        "cells_changed": newly,
+                        "already_nan": already_nan,
                     }
                 )
 
         # Contextual spikes (ANO003): a local anomaly, so clip to the local
         # band rather than a global bound, or NaN it for imputation.
-        spike_thresh = _spike_threshold(domain)
+        spike_thresh = spike_threshold_preset(domain)
         for col in spike_cols:
             if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
                 continue
-            values = out[col].dropna()
-            mask, lower, upper = _spike_info(values, _SPIKE_WINDOW, spike_thresh)
+            values = df[col].dropna()
+            mask, lower, upper = spike_bounds(values, SPIKE_WINDOW, spike_thresh)
             idx = mask[mask].index
             if len(idx) == 0:
                 continue
@@ -307,31 +335,38 @@ def apply_fixes(
                     }
                 )
             else:  # "nan" / "drop"
+                already_nan = int(out.loc[idx, col].isna().sum())
+                newly = int(len(idx) - already_nan)
                 out.loc[idx, col] = np.nan
                 nan_filled_cols.add(col)
                 log.append(
                     {
                         "column": col,
                         "action": "spikes_to_nan",
-                        "cells_changed": int(len(idx)),
+                        "cells_changed": newly,
+                        "already_nan": already_nan,
                     }
                 )
 
     # 3. Stuck values — replace flagged runs with NaN.
     if stuck == "nan":
-        window = _stuck_window(domain)
+        window = stuck_window_preset(domain)
         for col in stuck_cols:
             if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
                 continue
-            mask = _stuck_mask(out[col], window)
+            mask, _ = stuck_run_mask(df[col], window)
             if mask.any():
-                out.loc[mask[mask].index, col] = np.nan
+                idx = mask[mask].index
+                already_nan = int(out.loc[idx, col].isna().sum())
+                newly = int(len(idx) - already_nan)
+                out.loc[idx, col] = np.nan
                 nan_filled_cols.add(col)
                 log.append(
                     {
                         "column": col,
                         "action": "stuck_to_nan",
-                        "cells_changed": int(mask.sum()),
+                        "cells_changed": newly,
+                        "already_nan": already_nan,
                     }
                 )
 
@@ -378,10 +413,13 @@ def apply_fixes(
                     }
                 )
 
+    if restore_positions is not None:
+        out = out.iloc[restore_positions]
+
     report.last_fixes = log
     if verbose:
         _print_log(log)
-    return out
+    return out.reset_index() if restore_time_col else out
 
 
 def _apply_fixes_by_group(
@@ -494,6 +532,7 @@ def fix(
     domain: Optional[str] = None,
     available_at: Optional[dict] = None,
     constraints: Optional[dict] = None,
+    group_col: Optional[str] = None,
     missing: Optional[str] = "interpolate",
     outliers: Optional[str] = "clip",
     stuck: Optional[str] = "nan",
@@ -513,7 +552,7 @@ def fix(
 
     Parameters
     ----------
-    df, target, time_col, domain, available_at, constraints
+    df, target, time_col, domain, available_at, constraints, group_col
         Passed through to ``scan``. Without ``available_at=``, LEK004 (as-of
         leakage) never runs; without ``constraints=``, VAL001/VAL002 never
         run — both are opt-in because tsauditor cannot infer a release
@@ -521,7 +560,16 @@ def fix(
         exercise either check together with a one-shot repair was to call
         ``scan()`` and ``apply_fixes()`` separately; ``fix()`` silently
         skipped them with no error, which read as "nothing wrong" rather
-        than "not checked."
+        than "not checked." ``group_col`` was the same story for panel
+        (long-format, multi-entity) data: every other panel-aware entry
+        point (``scan()``, ``GuardReport.apply_fixes()``, ``health_score()``,
+        ``to_json()``, ``to_pdf()``) accepted or threaded it, but ``fix()``
+        itself had no parameter for it at all -- ``tsa.fix(panel_df,
+        group_col=...)`` raised ``TypeError: unexpected keyword argument``,
+        forcing panel users to always fall back to the two-call form this
+        function exists to avoid. ``apply_fixes`` itself needs no separate
+        argument for this: it reads ``group_col`` back off
+        ``report.metadata``, which ``scan()`` populates.
     missing, outliers, stuck, leakage, verbose
         Passed through to ``apply_fixes``.
 
@@ -544,6 +592,7 @@ def fix(
         domain=domain,
         available_at=available_at,
         constraints=constraints,
+        group_col=group_col,
     )
     clean = apply_fixes(
         report,
@@ -579,20 +628,14 @@ def _print_log(log: List[Dict[str, Any]]) -> None:
 _QUALITY_CODES = ("PRF002", "PRF006", "PRF007", "ANO001", "ANO002", "ANO003")
 
 
-def affected_cells(report, df: pd.DataFrame) -> int:
-    """
-    Count distinct data cells implicated by detected *quality* issues (missing,
-    point outliers, contextual spikes, stuck runs). Leakage is excluded — a
-    leaky column is a modeling risk, not a corrupt cell. Cells flagged by more
-    than one detector in the same column are counted once.
-    """
-    domain = report.metadata.get("domain")
-    z_thresh = _zscore_threshold(domain)
-    window = _stuck_window(domain)
-    spike_thresh = _spike_threshold(domain)
-
+def _affected_cells_single(
+    issues, df: pd.DataFrame, z_thresh: float, window: int, spike_thresh: float
+) -> int:
+    """Affected-cell count for one series (single entity or non-panel), given
+    only *its own* Issues. Factored out of affected_cells so the panel path
+    below can call it once per entity instead of once for the whole panel."""
     by_col: Dict[str, set] = {}
-    for issue in report.all_issues:
+    for issue in issues:
         if issue.code in _QUALITY_CODES and issue.column in df.columns:
             by_col.setdefault(issue.column, set()).add(issue.code)
 
@@ -616,12 +659,56 @@ def affected_cells(report, df: pd.DataFrame) -> int:
             om = _outlier_mask(values, z_thresh)
             mask.loc[om[om].index] = True
         if "ANO003" in codes and len(values):
-            sm, _, _ = _spike_info(values, _SPIKE_WINDOW, spike_thresh)
+            sm, _, _ = spike_bounds(values, SPIKE_WINDOW, spike_thresh)
             mask.loc[sm[sm].index] = True
         if "ANO001" in codes:
-            km = _stuck_mask(s, window)
+            km, _ = stuck_run_mask(s, window)
             mask |= km.fillna(False)
         total += int(mask.sum())
+    return total
+
+
+def affected_cells(report, df: pd.DataFrame) -> int:
+    """
+    Count distinct data cells implicated by detected *quality* issues (missing,
+    point outliers, contextual spikes, stuck runs). Leakage is excluded — a
+    leaky column is a modeling risk, not a corrupt cell. Cells flagged by more
+    than one detector in the same column are counted once.
+
+    Panel-aware. When the report came from ``scan(group_col=...)``, every
+    quality detector ran on one entity at a time (see scanner.py's
+    per-partition loop) -- so re-deriving each mask from the raw, interleaved
+    ``df`` instead would compute one mean/std/rolling-window across every
+    entity's mixed values at once: a real outlier in a small-scale entity can
+    be diluted below a large-scale entity's ordinary range and vanish
+    entirely, or the reverse -- an entity's normal values can look anomalous
+    next to a very different one. Recomputing per entity, on only that
+    entity's own Issues, mirrors what the original per-entity scan and
+    ``apply_fixes``'s ``_apply_fixes_by_group`` both already do; this is what
+    makes ``health_score()`` and ``to_json(df=...)``'s health block trustworthy
+    for panel data instead of silently wrong.
+    """
+    domain = report.metadata.get("domain")
+    z_thresh = zscore_preset(domain)
+    window = stuck_window_preset(domain)
+    spike_thresh = spike_threshold_preset(domain)
+
+    group_col = report.metadata.get("group_col")
+    if group_col is None or group_col not in df.columns:
+        return _affected_cells_single(
+            report.all_issues, df, z_thresh, window, spike_thresh
+        )
+
+    total = 0
+    groups = df[group_col].to_numpy()
+    for key in pd.unique(groups):
+        if pd.isna(key):
+            # PNL004: rows with a null entity id are never scanned per-entity,
+            # so there is no entity-specific Issue list to recompute against.
+            continue
+        sub = df[groups == key]
+        issues = [i for i in report.all_issues if i.group == str(key)]
+        total += _affected_cells_single(issues, sub, z_thresh, window, spike_thresh)
     return total
 
 

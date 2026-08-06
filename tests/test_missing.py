@@ -131,3 +131,31 @@ def test_missing_rate_threshold_is_inclusive():
         {"x": just_under}, index=pd.date_range("2024-01-01", periods=100, freq="D")
     )
     assert [i.code for i in audit_missing(df2, cluster_threshold=999)] == []
+
+
+def test_shuffled_but_valid_index_still_finds_the_cluster():
+    """
+    Regression (full-sweep finding). PRF002/PRF005 cluster detection walks
+    consecutive rows via consecutive_run_lengths. Before audit_missing
+    sorted its own input, rows out of chronological order (still a valid,
+    non-duplicate DatetimeIndex) could silently miss a real NaN cluster
+    entirely instead of raising or still catching it.
+    """
+    import numpy as np
+    import pandas as pd
+
+    dates = pd.date_range("2024-01-01", periods=100, freq="D")
+    values = np.arange(100.0)
+    values[10:15] = np.nan  # 5-row cluster
+    df_sorted = pd.DataFrame({"x": values}, index=dates)
+    df_shuffled = df_sorted.sample(frac=1.0, random_state=3)
+
+    sorted_issues = [i for i in audit_missing(df_sorted) if i.code == "PRF002"]
+    shuffled_issues = [i for i in audit_missing(df_shuffled) if i.code == "PRF002"]
+    assert len(sorted_issues) == 1
+    assert len(shuffled_issues) == 1
+    assert (
+        shuffled_issues[0].evidence["longest_consecutive_run"]
+        == sorted_issues[0].evidence["longest_consecutive_run"]
+        == 5
+    )

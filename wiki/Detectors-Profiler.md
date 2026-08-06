@@ -1,6 +1,6 @@
 # Profiler Detectors
 
-The profiler asks whether your data is **structurally sound**, before anyone looks at whether the values make sense. Three functions, six issue codes.
+The profiler asks whether your data is **structurally sound**, before anyone looks at whether the values make sense. Four functions, seven issue codes.
 
 | Function | Codes | Module |
 | -------- | ----- | ------ |
@@ -9,7 +9,7 @@ The profiler asks whether your data is **structurally sound**, before anyone loo
 | [`audit_non_finite`](#audit_non_finite) | PRF007 | `tsauditor/profiler/missing.py` |
 | [`audit_stationarity`](#audit_stationarity) | PRF003 | `tsauditor/profiler/stationarity.py` |
 
-All of them raise `ValueError` if the DataFrame index is not a `DatetimeIndex`, and all return an empty list for an empty DataFrame. All examine **numeric columns only**, text columns are ignored entirely.
+All four raise `ValueError` if the DataFrame index is not a `DatetimeIndex`, and all four return an empty list for an empty DataFrame. All four examine **numeric columns only**; text columns are ignored entirely.
 
 ---
 
@@ -36,13 +36,13 @@ Returns a `list` of `Issue` objects (possibly empty).
 
 ### How it works
 
-**Step 1, duplicates (PRF004).** If any timestamp appears more than once, raise CRITICAL immediately. Then drop the duplicates internally, keeping the first, so the gap arithmetic that follows is valid.
+**Step 1: duplicates (PRF004).** If any timestamp appears more than once, raise CRITICAL immediately. Then drop the duplicates internally, keeping the first, so the gap arithmetic that follows is valid.
 
 Why CRITICAL: a duplicate timestamp does not announce itself. `df.rolling("5D")` silently includes both rows. `df.shift(1)` silently returns the wrong neighbour. `df.resample()` silently aggregates them together. Nothing errors; the numbers are simply wrong. It must be resolved before modeling.
 
-**Step 2, gap sizes.** Compute the difference between each pair of consecutive timestamps, converted to days.
+**Step 2: gap sizes.** Compute the difference between each pair of consecutive timestamps, converted to days.
 
-**Step 3, pick the threshold.** This is where `domain` matters:
+**Step 3: pick the threshold.** This is where `domain` matters:
 
 ```
 domain == "finance"  ->  threshold = 5.0 days              (fixed)
@@ -54,22 +54,22 @@ The fixed 5.0 for finance exists because markets close. A daily equity series ha
 
 For everything else the threshold adapts to your data. A sensor sampling every 10 minutes gets a threshold of 30 minutes; a monthly series gets roughly 90 days. You do not have to know your sampling rate in advance.
 
-**Step 4, large gaps (PRF001).** Any gap at or above the threshold is flagged, as a single WARNING for the column-less dataset level, listing up to five example locations.
+**Step 4: large gaps (PRF001).** Any gap at or above the threshold is flagged, as a single WARNING for the column-less dataset level, listing up to five example locations.
 
-**Step 5, gap clusters (PRF005).** Run-length encoding over the "is this gap large?" boolean sequence. Two or more *consecutive* large gaps form a cluster.
+**Step 5: gap clusters (PRF005).** Run-length encoding over the "is this gap large?" boolean sequence. Two or more *consecutive* large gaps form a cluster.
 
-The distinction matters. One large gap is usually a holiday. Several large gaps in a row means your feed was down for a stretch, or the source changed its sampling regime, a structural event, not a calendar quirk.
+The distinction matters. One large gap is usually a holiday. Several large gaps in a row means your feed was down for a stretch, or the source changed its sampling regime: a structural event, not a calendar quirk.
 
 ### Issue codes and evidence
 
-**PRF004, Duplicate timestamps.** CRITICAL. `column` is `None` (dataset-level).
+**PRF004: Duplicate timestamps.** CRITICAL. `column` is `None` (dataset-level).
 
 | Evidence key | Meaning |
 | ------------ | ------- |
 | `duplicate_count` | Number of rows involved (counts *all* members of each duplicate set, not the excess) |
 | `examples` | Up to 5 duplicated timestamps, as strings |
 
-**PRF001, Large gaps.** WARNING. `column` is `None`.
+**PRF001: Large gaps.** WARNING. `column` is `None`.
 
 | Evidence key | Meaning |
 | ------------ | ------- |
@@ -77,7 +77,7 @@ The distinction matters. One large gap is usually a holiday. Several large gaps 
 | `maximum_gap_days` | The single largest gap, in days |
 | `locations` | Up to 5 timestamps *following* a large gap |
 
-**PRF005, Clustered gaps.** WARNING. `column` is `None`.
+**PRF005: Clustered gaps.** WARNING. `column` is `None`.
 
 | Evidence key | Meaning |
 | ------------ | ------- |
@@ -115,7 +115,7 @@ PRF004 critical {'duplicate_count': 2, 'examples': ['2024-01-02 00:00:00']}
 PRF001 warning {'gap_count': 1, 'maximum_gap_days': 17.0, 'locations': ['2024-01-20 00:00:00']}
 ```
 
-Read `duplicate_count: 2` carefully, it means two *rows* participate in the duplication, not that there are two extra rows. Only one timestamp is repeated, which is why `examples` has a single entry.
+Read `duplicate_count: 2` carefully; it means two *rows* participate in the duplication, not that there are two extra rows. Only one timestamp is repeated, which is why `examples` has a single entry.
 
 PRF005 did not fire: there is one large gap, and a cluster requires at least two consecutive ones.
 
@@ -123,7 +123,7 @@ PRF005 did not fire: there is one large gap, and a cluster requires at least two
 
 **Adaptive thresholds need enough data.** With only a handful of rows the median gap is unstable, so `3 × median` can be far too tight or too loose. Prefer `domain="finance"` (or a longer series) for short frames.
 
-**The finance preset assumes daily data.** The 5.0-day threshold is calibrated for a daily equity series. Intraday financial data will produce a flood of false negatives, every overnight gap passes unnoticed. For intraday data, leave `domain=None` and let the adaptive rule do its job.
+**The finance preset assumes daily data.** The 5.0-day threshold is calibrated for a daily equity series. Intraday financial data will produce a flood of false negatives: every overnight gap passes unnoticed. For intraday data, leave `domain=None` and let the adaptive rule do its job.
 
 **Regular gaps are not distinguished from irregular ones.** A perfectly regular weekly series has a 7-day gap between every pair of rows; with `domain=None` the adaptive threshold handles that correctly (21 days), but with `domain="finance"` every single gap would be flagged.
 
@@ -155,17 +155,17 @@ audit_missing(
 
 ### How it works
 
-**Why two checks and not one.** A column that is 20% missing at random is annoying but usually survivable, interpolation works fine. A column that is 20% missing *in one continuous block* is a different problem entirely: something was broken for a stretch of time, interpolation across the whole block is fabrication, and the missingness itself may carry information. Splitting these into PRF006 (rate) and PRF002 (structure) lets you respond appropriately to each.
+**Why two checks and not one.** A column that is 20% missing at random is annoying but usually survivable; interpolation works fine. A column that is 20% missing *in one continuous block* is a different problem entirely: something was broken for a stretch of time, interpolation across the whole block is fabrication, and the missingness itself may carry information. Splitting these into PRF006 (rate) and PRF002 (structure) lets you respond appropriately to each.
 
-**PRF006, high missing rate.** Simply `missing_count / total_rows >= missing_rate_threshold`.
+**PRF006: high missing rate.** Simply `missing_count / total_rows >= missing_rate_threshold`.
 
-**PRF002, clustered missing.** Run-length encoding over the NaN mask, vectorized with NumPy rather than looped. Any run of length `>= cluster_threshold` counts as a cluster.
+**PRF002: clustered missing.** Run-length encoding over the NaN mask, vectorized with NumPy rather than looped. Any run of length `>= cluster_threshold` counts as a cluster.
 
-**Why the domain thresholds differ.** `finance = 5`, everything else `= 3`. A daily price series legitimately has runs of missing values across long weekends and holidays, so a tolerance of 5 avoids flagging the calendar. A sensor sampling continuously has no such excuse, three consecutive missing readings already suggests a dropout, so the tolerance is tighter.
+**Why the domain thresholds differ.** `finance = 5`, everything else `= 3`. A daily price series legitimately has runs of missing values across long weekends and holidays, so a tolerance of 5 avoids flagging the calendar. A sensor sampling continuously has no such excuse: three consecutive missing readings already suggests a dropout, so the tolerance is tighter.
 
 ### Issue codes and evidence
 
-**PRF006, High missing rate.** WARNING. `column` is set.
+**PRF006: High missing rate.** WARNING. `column` is set.
 
 | Evidence key | Meaning |
 | ------------ | ------- |
@@ -173,7 +173,7 @@ audit_missing(
 | `missing_percentage` | As a percentage, rounded to 2dp |
 | `threshold_percentage` | The threshold it crossed |
 
-**PRF002, Clustered missing values.** WARNING. `column` is set.
+**PRF002: Clustered missing values.** WARNING. `column` is set.
 
 | Evidence key | Meaning |
 | ------------ | ------- |
@@ -223,6 +223,86 @@ Only PRF002 fired. The column is 20% missing, which is below the 30% rate thresh
 
 ---
 
+## `audit_non_finite`
+
+### What it detects
+
+`inf` and `-inf` in numeric columns.
+
+An infinity is not a missing value and not an outlier, and it was invisible to the rest of the library before this check existed. `isna()` is `False` for `np.inf`, so PRF002 and PRF006 never saw one, and every anomaly and leakage detector quietly replaced it with `NaN` on its own working copy so its arithmetic would not break. Nothing owned reporting it: a user could run `scan()`, see no relevant issue, run `fix()`, and still hand infinities to their model.
+
+### Signature
+
+```python
+audit_non_finite(df: pd.DataFrame) -> list
+```
+
+| Parameter | Type | Default | What it does |
+| --------- | ---- | ------- | ------------ |
+| `df` | `pd.DataFrame` | required | Must have a `DatetimeIndex` |
+
+No threshold parameter, deliberately; see below.
+
+### How it works
+
+Per numeric column, count values equal to `np.inf` and `-np.inf`. If the total is zero, move on. Otherwise raise one CRITICAL issue for that column.
+
+**Why there is no rate threshold.** PRF006 needs a threshold because some missingness is normal and the question is how much is too much. That question doesn't apply here: an infinity is never a measurement; it's the residue of a division by zero, an overflow, or a log of zero somewhere upstream in a pipeline. One is a defect. The threshold is one.
+
+**Why CRITICAL.** Matching PRF004 (duplicate timestamps), and for the same reason: a single `inf` invalidates other checks rather than merely describing the data. It makes a column's mean `inf` and its standard deviation `NaN`, so any statistic computed on the raw column is meaningless, and scikit-learn raises at `fit` time rather than degrading gracefully.
+
+### Issue code and evidence
+
+**PRF007: Infinite values.** CRITICAL. `column` is set.
+
+| Evidence key | Meaning |
+| ------------ | ------- |
+| `non_finite_count` | Total `inf` + `-inf` values in the column |
+| `positive_inf_count` | Count of `+inf` specifically |
+| `negative_inf_count` | Count of `-inf` specifically |
+| `non_finite_percentage` | As a percentage of the column length, rounded to 4dp |
+| `n_finite_remaining` | How many values are left once non-finite ones are discarded; the count the other detectors actually work with |
+| `below_leakage_min_obs` | Whether `n_finite_remaining` falls under the 30 observations the leakage checks (`min_obs`) require |
+| `leakage_min_obs` | The threshold `below_leakage_min_obs` was compared against (30) |
+| `first_occurrence` | Timestamp of the first non-finite value, as a string |
+
+`below_leakage_min_obs` matters more than the raw count suggests: below it, the column isn't merely noisier for LEK001/LEK002/LEK003/LEK005; it is skipped by them entirely, with no message of its own.
+
+### When it does not fire
+
+- The column has no `inf` or `-inf` values
+- The column is non-numeric
+- The DataFrame is empty
+
+### Worked example
+
+```python
+import pandas as pd, numpy as np
+from tsauditor.profiler.missing import audit_non_finite
+
+idx = pd.date_range("2024-01-01", periods=40, freq="D")
+values = np.random.default_rng(0).normal(100, 5, 40)
+values[5] = np.inf
+values[6] = np.inf
+values[10] = -np.inf
+df = pd.DataFrame({"price": values}, index=idx)
+
+for issue in audit_non_finite(df):
+    print(issue.code, issue.severity, issue.column, issue.evidence)
+```
+
+```
+PRF007 critical price {'non_finite_count': 3, 'positive_inf_count': 2, 'negative_inf_count': 1, 'non_finite_percentage': 7.5, 'n_finite_remaining': 37, 'below_leakage_min_obs': False, 'leakage_min_obs': 30, 'first_occurrence': '2024-01-06 00:00:00'}
+```
+
+### Limitations and false positives
+
+**Repair is unconditional.** Unlike every other quality fix, `apply_fixes()` converts non-finite values to `NaN` (then imputes, unless `missing=None`) regardless of `missing=` or `outliers=` settings; there is no reading of an infinity under which keeping it is correct.
+
+**A column with one deliberate sentinel value of `inf` still fires.** If your source data legitimately uses `inf` to mean something (rather than as an error artifact), PRF007 has no way to distinguish that from a bug. Replace the sentinel before scanning.
+
+---
+
 ## `audit_stationarity`
 
 ### What it detects
@@ -235,7 +315,7 @@ Columns whose statistical properties drift over time, specifically, columns that
 
 A series is **stationary** when its mean and variance do not systematically change over time. Daily temperature is roughly stationary: it fluctuates, but around a stable level. A stock price is not: it wanders, and the level it wanders around today has nothing to do with the level five years ago.
 
-This matters because many time-series models, ARIMA, linear regression on lagged values, most classical forecasting, assume stationarity. Fed a non-stationary series they can produce a *spurious regression*: an impressive R² that reflects nothing but two variables both drifting upward over time.
+This matters because many time-series models (ARIMA, linear regression on lagged values, most classical forecasting) assume stationarity. Fed a non-stationary series they can produce a *spurious regression*: an impressive R² that reflects nothing but two variables both drifting upward over time.
 
 The usual remedy is **differencing**: model the change from one step to the next rather than the level. Prices are non-stationary; returns usually are not.
 
@@ -267,18 +347,18 @@ Per numeric column:
 
 1. Drop NaNs, then replace `inf` / `-inf` with NaN and drop those too.
 2. Skip if fewer than `min_obs` observations remain.
-3. Skip if the column is constant, `adfuller` raises `"Invalid input, x is constant"` on such input, and a constant series is trivially (if degenerately) stationary anyway.
+3. Skip if the column is constant: `adfuller` raises `"Invalid input, x is constant"` on such input, and a constant series is trivially (if degenerately) stationary anyway.
 4. Run `adfuller(series, maxlag=max_lag, autolag="AIC")`.
 5. If it raises `ValueError` or `LinAlgError` on a near-singular input, skip that column rather than aborting the whole scan.
 6. Flag INFO if `p_value > alpha`.
 
 **Why `max_lag` is the speed knob.** With `max_lag=None`, statsmodels picks a maximum lag from the sample size and then fits an OLS regression at *every* lag from 0 up to that maximum, selecting the best by AIC. On a long series that is a great many regressions, per column. Passing `max_lag=4` caps the search at five fits, which is dramatically faster at a modest cost in test precision.
 
-**Why the severity is only INFO.** Non-stationarity is not a data *defect*. A price series is supposed to be non-stationary; that is what prices do. This is a modeling advisory, not a bug report, hence INFO, and hence why it never counts against your health score.
+**Why the severity is only INFO.** Non-stationarity is not a data *defect*. A price series is supposed to be non-stationary; that is what prices do. This is a modeling advisory, not a bug report; hence INFO, and hence why it never counts against your health score.
 
 ### Issue code and evidence
 
-**PRF003, Non-stationary column.** INFO. `column` is set.
+**PRF003: Non-stationary column.** INFO. `column` is set.
 
 | Evidence key | Meaning |
 | ------------ | ------- |
@@ -292,7 +372,7 @@ Per numeric column:
 - Fewer than `min_obs` (default 25) non-null, finite observations
 - The column is constant
 - `adfuller` raised on degenerate input
-- `p_value <= alpha`, the column is stationary
+- `p_value <= alpha`: the column is stationary
 - `run_stationarity=False` was passed to `scan()`
 
 ### Worked example
@@ -317,7 +397,7 @@ for issue in audit_stationarity(df):
 PRF003 random_walk {'adf_statistic': -1.6696, 'p_value': 0.4468, 'n_observations': 199, 'alpha': 0.05}
 ```
 
-Exactly one column flagged, and it is the right one. The random walk's p-value of 0.4468 is far above 0.05, no evidence against a unit root. `white_noise` produced a p-value below 0.05 and was correctly left alone.
+Exactly one column flagged, and it is the right one. The random walk's p-value of 0.4468 is far above 0.05; no evidence against a unit root. `white_noise` produced a p-value below 0.05 and was correctly left alone.
 
 ### Limitations and false positives
 
@@ -328,127 +408,3 @@ Exactly one column flagged, and it is the right one. The random walk's p-value o
 **Flagging is expected and often correct.** Price columns *should* be flagged. PRF003 on a price series is the tool working, not a problem to fix.
 
 **`domain` does nothing here.** It is accepted so every detector has the same signature shape, but it has no effect on the test.
-
----
-
-## `audit_non_finite`
-
-### What it detects
-
-Infinite values (`np.inf`, `-np.inf`) in numeric columns. **PRF007**, CRITICAL.
-
-### Signature
-
-```python
-audit_non_finite(df: pd.DataFrame) -> List[Issue]
-```
-
-No parameters beyond the frame. That is deliberate, and explained below.
-
-### The problem this solves
-
-An infinity is neither missing nor an outlier, and before this check existed it fell between every stool in the library.
-
-`isna()` returns False for an infinity, so PRF002 and PRF006 never saw one. Meanwhile every anomaly and leakage detector calls `.replace([np.inf, -np.inf], np.nan)` on its own working copy, because a single inf makes a column's mean `inf` and its standard deviation `NaN`, which would silently disable the detector's own comparisons. Eight modules did this. None of them reported it, because from each detector's point of view it was somebody else's problem.
-
-The result was a silent hole in the pipeline:
-
-| 200 rows, 10 consecutive bad values | Codes reported | After `fix()` |
-| ----------------------------------- | -------------- | ------------- |
-| 10 consecutive `NaN` | PRF002, plus anomaly codes | 0 NaN remaining |
-| 10 consecutive `inf` | anomaly codes only, none about the infs | **10 inf remaining** |
-
-A user could scan, see nothing relevant, fix, and still pass infinities to their model.
-
-### Why there is no threshold
-
-Every other threshold in this library exists because the underlying quantity has a legitimate non-zero range and the question is *how much is too much*. Some missingness is normal, so PRF006 needs a rate. Some autocorrelation is normal, so LEK003 needs an excess.
-
-That question does not arise for an infinity. It is never a measurement. It is the residue of a division by zero, a numeric overflow, or a log of a non-positive number somewhere upstream, and one of them means a calculation failed. So the threshold is one, and the function takes no threshold parameter.
-
-### Why CRITICAL
-
-Same reasoning as PRF004 (duplicate timestamps): it invalidates other checks rather than merely describing the data.
-
-A single infinity makes every statistic computed on the raw column meaningless, and scikit-learn raises at `fit` time rather than degrading gracefully. It also silently degrades this library's own output, since the other detectors are scoring a column with those rows discarded.
-
-### Issue codes and evidence
-
-| Key | Meaning |
-| --- | ------- |
-| `non_finite_count` | Total infinities in the column |
-| `positive_inf_count` | How many are `+inf` |
-| `negative_inf_count` | How many are `-inf` |
-| `non_finite_percentage` | As a percentage of all rows |
-| `n_finite_remaining` | Observations the other detectors actually work with |
-| `below_leakage_min_obs` | Whether `n_finite_remaining` is under 30 |
-| `leakage_min_obs` | The 30 above, so the comparison is visible |
-| `first_occurrence` | Timestamp of the first infinity |
-
-**Read `below_leakage_min_obs` first.** The leakage detectors (LEK001, LEK002, LEK003, LEK005) all require 30 observations before they will score a column. Below that they skip it *silently*. So a column with `below_leakage_min_obs: true` has not merely been measured imprecisely, it has not been checked for leakage at all, and nothing else in the report will tell you.
-
-The sign split matters more than it looks. All-positive infinities usually mean division by zero or overflow in one direction; a mix of both signs more often means a ratio whose denominator crosses zero, which is a different bug upstream.
-
-### When it does not fire
-
-- The column is not numeric
-- The column contains no infinities. `NaN` alone is PRF002 and PRF006's business, and the two categories never overlap, since `isinf` is False for `NaN`
-- The DataFrame is empty
-
-### Worked example
-
-```python
-import numpy as np, pandas as pd, tsauditor as tsa
-
-v = np.random.default_rng(1).normal(100, 5, 200)
-v[100:110] = np.inf
-v[50] = -np.inf
-df = pd.DataFrame({"x": v}, index=pd.date_range("2024-01-01", periods=200, freq="D"))
-
-report = tsa.scan(df, run_stationarity=False)
-issue = [i for i in report.all_issues if i.code == "PRF007"][0]
-print(issue.severity)
-print(issue.evidence)
-```
-
-```
-critical
-{'non_finite_count': 11, 'positive_inf_count': 10, 'negative_inf_count': 1,
- 'non_finite_percentage': 5.5, 'n_finite_remaining': 189,
- 'below_leakage_min_obs': False, 'leakage_min_obs': 30,
- 'first_occurrence': '2024-02-20 00:00:00'}
-```
-
-### Repair
-
-`apply_fixes()` converts infinities to `NaN`, then imputes them alongside genuine missing values.
-
-```python
-fixed = report.apply_fixes(df)
-np.isinf(fixed["x"]).sum()    # 0
-fixed["x"].isna().sum()       # 0
-```
-
-This step runs **unconditionally**, unlike every other repair in the library, which only acts on flagged columns when you have enabled that repair type. There is no reading under which keeping an infinity is correct.
-
-With `missing=None` the cells are left as `NaN` rather than imputed:
-
-```python
-fixed = report.apply_fixes(df, missing=None)
-np.isinf(fixed["x"]).sum()    # 0
-fixed["x"].isna().sum()       # 11
-```
-
-`NaN` is honest about the value being unknown. `inf` is a false claim about its size.
-
-### Limitations and false positives
-
-**It cannot tell you which upstream computation produced the infinity**, only that one did. The `first_occurrence` timestamp and the sign split are the diagnostic starting points, not the answer.
-
-**Interpolation used to spread infinities, and this is why the repair runs first.** On real data, five features built from the OGDC series by ordinary feature engineering (`Returns / Return_lag1`, `log(Returns)`, `Volume / ChangeP`) contain 19 infinities across 3 columns, because those denominators are genuinely zero on some days. Before PRF007 existed, `fix()` returned **35**: `interpolate` filling a NaN that neighbours an infinity carries the infinity into the gap, so `log_ret` went from 6 to 22. The conversion step now runs before imputation for exactly this reason.
-
-**Imputing is a fallback, not a fix.** An infinity means a calculation failed. Interpolating over it produces a plausible-looking number in place of a bug you have not found, and the same bug will produce more infinities on your next batch. Treat `apply_fixes()` here as a way to get a usable frame while you go and fix the upstream code, not as a resolution.
-
-**It says nothing about very large finite values.** A column where a division by a near-zero denominator produced `1e308` rather than `inf` is just as broken and PRF007 will not fire. ANO002 may catch it as an outlier, but that is a different check with different thresholds and no guarantee.
-
-**Infinities in a non-numeric column are invisible.** A column of dtype `object` holding the string `"inf"` is not examined, because the whole library treats non-numeric columns as out of scope.

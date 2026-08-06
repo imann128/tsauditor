@@ -33,8 +33,8 @@ time series:
    report = tsa.scan(panel, target="Direction", group_col="ticker", domain="finance")
    report.summary()          # prevalence view: which findings are systemic vs isolated
 
-For a panel with many entities, pass ``n_jobs=-1`` to audit entities in
-parallel across all available cores instead of sequentially.
+Entities are audited sequentially, one at a time; ``scan()`` has no
+parallelism option.
 
 New to tsauditor?
 -------------------
@@ -44,5 +44,9 @@ Start with `examples/getting_started
 a from-zero, runnable notebook covering the full scan -> read -> repair
 workflow on a small synthetic dataset.
 
-For everything added in the most recent release, see `examples/whats_new_0_4_0
+For a tour of what 0.4.0 added (PRF007, PNL004, and more), see the
+`0.4.0 tutorial
 <https://github.com/imann128/tsauditor/tree/main/examples/whats_new_0_4_0>`_.
+0.5.0 is a maintenance release; see the `changelog
+<https://github.com/imann128/tsauditor/blob/main/CHANGELOG.md>`_ for what
+changed.

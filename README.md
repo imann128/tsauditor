@@ -3,7 +3,7 @@
 [![codecov](https://codecov.io/github/imann128/tsauditor/graph/badge.svg)](https://codecov.io/github/imann128/tsauditor)
 [![Documentation](https://readthedocs.org/projects/tsauditor/badge/?version=latest)](https://tsauditor.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)
 
 A data-quality auditing library for **time-series tabular data**, with a focus on
 financial and sensor domains. `tsauditor` scans a `DataFrame` and returns a
@@ -301,14 +301,17 @@ report.to_pdf("report.pdf", df=df, fixed_df=clean)     # needs 'tsauditor[pdf]'
 `to_pdf` produces a formal, vector, text-selectable report (Times New Roman, black text,
 headings and tables, no charts, no colour coding): a Data Health Scorecard, dataset
 overview, before/after comparison, target-leakage callout, executive summary, and a
-paginated issues table.
+paginated issues table. For a panel scan, the issues table becomes a prevalence table
+(one row per finding, with the fraction of entities it hit) instead of a raw per-issue
+dump, matching `report.summary()`'s CLI output.
 
 ## Feeding a forecasting model (TimesFM adapter)
 
 Zero-shot forecasters such as Google TimesFM tokenize a clean, contiguous, finite context
 window; a raw series with gaps fails tokenization. The adapter audits, repairs, and returns
-a plain `float32` array, and **verifies it is finite** before returning, so a NaN never
-reaches the model. It adds no `timesfm` dependency.
+a plain `float32` array, and **verifies `target_col` is numeric and finite** before
+returning, so neither a non-numeric column nor a NaN reaches the model silently. It adds
+no `timesfm` dependency.
 
 ```python
 array = tsa.adapters.to_timesfm(df, target_col="close_price", domain="finance")
@@ -372,8 +375,11 @@ CRITICAL  LEK001  ret    5/5   100.0%   <- systemic: suspect the pipeline
 WARNING   ANO002  price  1/5    20.0%   <- isolated: inspect that entity
 ```
 
-Repairs are panel-aware too, `apply_fixes()` partitions by entity, so one entity's
-values can never fill another's gaps. See the [Panel Data](https://github.com/imann128/tsauditor/wiki/Panel-Data) wiki page.
+Repairs are panel-aware too: `apply_fixes()` partitions by entity, so one entity's
+values can never fill another's gaps, and `health_score()`/`to_json()`/`to_pdf()` score
+each entity's own cells against its own distribution rather than mixing scales across
+entities. `fix()` accepts `group_col=` directly, for a one-shot scan + repair without
+calling `scan()` and `apply_fixes()` separately. See the [Panel Data](https://github.com/imann128/tsauditor/wiki/Panel-Data) wiki page.
 
 **Audit separate frames in parallel.** If your entities live in separate DataFrames
 rather than one long-format frame, `scan()` is a pure function and `GuardReport` is a
@@ -445,12 +451,6 @@ ruff format --check .
 All three must pass; CI verifies them across Python 3.9–3.14 on Linux, Windows and macOS.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Contributors
-
-- [@LuisMend12](https://github.com/LuisMend12): [#51](https://github.com/imann128/tsauditor/pull/51),
-  fixing `GuardReport.to_dict()` silently omitting the `info` count from its totals
-  ([#43](https://github.com/imann128/tsauditor/issues/43)).
-
 ## Questions, tutorials, and usage help
 
 Confused about how to use `tsauditor`, how a particular check applies to your data, want
@@ -477,8 +477,8 @@ Featured on [Python Hub](https://pythonhub.dev)
 
 ## Status
 
-Beta (`0.4.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
-modules are implemented and tested (448 tests passing; CI across Python 3.9–3.14 on
+Beta (`0.5.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
+modules are implemented and tested (500 tests passing; CI across Python 3.9–3.14 on
 Linux, Windows, macOS).
 
 ## License

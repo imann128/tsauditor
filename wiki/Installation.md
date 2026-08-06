@@ -39,9 +39,9 @@ pip install 'tsauditor[pdf,polars]'
 
 ### What each extra unlocks
 
-**`[pdf]`**, enables `GuardReport.to_pdf("report.pdf")`, which writes a formal, text-selectable PDF. Without it, calling `to_pdf` raises an `ImportError`. Every other output format (`summary()`, `to_json()`, `to_dict()`) works without this extra.
+**`[pdf]`**: enables `GuardReport.to_pdf("report.pdf")`, which writes a formal, text-selectable PDF. Without it, calling `to_pdf` raises an `ImportError`. Every other output format (`summary()`, `to_json()`, `to_dict()`) works without this extra.
 
-**`[polars]`**, lets you pass a polars DataFrame directly to `scan()`. `tsauditor` converts it to pandas at the boundary and does all its work in pandas. Because polars has no index, you **must** also pass `time_col=`:
+**`[polars]`**: lets you pass a polars DataFrame directly to `scan()`. `tsauditor` converts it to pandas at the boundary and does all its work in pandas. Because polars has no index, you **must** also pass `time_col=`:
 
 ```python
 report = tsa.scan(polars_df, time_col="date")   # time_col is required for polars
@@ -49,7 +49,7 @@ report = tsa.scan(polars_df, time_col="date")   # time_col is required for polar
 
 ### What needs no extra
 
-The **TimesFM adapter** (`tsauditor.adapters.to_timesfm`) works out of the box. It never imports `timesfm`, it only returns a NumPy array, and you own the model. `tsauditor` gains no dependency from it.
+The **TimesFM adapter** (`tsauditor.adapters.to_timesfm`) works out of the box. It never imports `timesfm`; it only returns a NumPy array, and you own the model. `tsauditor` gains no dependency from it.
 
 ---
 
@@ -82,9 +82,9 @@ ruff format --check .
 
 Every pull request runs:
 
-- **Lint**, `ruff check` and `ruff format --check` on Python 3.11
-- **Tests**, the full `pytest` suite across Python **3.9, 3.10, 3.11, 3.12, 3.13, 3.14** on **Ubuntu, Windows, and macOS** (18 combinations)
-- **Coverage**, uploaded to Codecov from the Ubuntu / Python 3.9 job
+- **Lint**: `ruff check` and `ruff format --check` on Python 3.11
+- **Tests**: the full `pytest` suite across Python **3.9, 3.10, 3.11, 3.12, 3.13, 3.14** on **Ubuntu, Windows, and macOS** (18 combinations)
+- **Coverage**: uploaded to Codecov from the Ubuntu / Python 3.9 job
 
 A PR must pass all of these before it can be merged.
 
@@ -98,7 +98,7 @@ print(tsa.__version__)
 ```
 
 ```
-0.4.0
+0.5.0
 ```
 
 If that prints a version, you are ready for the [Quickstart](Quickstart).
@@ -107,10 +107,10 @@ If that prints a version, you are ready for the [Quickstart](Quickstart).
 
 ## Troubleshooting
 
-**`ImportError: ... requires matplotlib`** when calling `to_pdf()`, install the PDF extra: `pip install 'tsauditor[pdf]'`.
+**`ImportError: ... requires matplotlib`** when calling `to_pdf()`: install the PDF extra: `pip install 'tsauditor[pdf]'`.
 
-**`ValueError: polars input requires time_col=`**, polars has no index, so `tsauditor` cannot guess which column holds the timestamps. Pass `time_col="your_date_column"`.
+**`ValueError: polars input requires time_col=`**: polars has no index, so `tsauditor` cannot guess which column holds the timestamps. Pass `time_col="your_date_column"`.
 
-**`ImportError: Converting a polars DataFrame requires pyarrow`**, install the polars extra rather than polars alone: `pip install 'tsauditor[polars]'`.
+**`ImportError: Converting a polars DataFrame requires pyarrow`**: install the polars extra rather than polars alone: `pip install 'tsauditor[polars]'`.
 
-**`zsh: no matches found: tsauditor[pdf]`**, you forgot the quotes. Use `pip install 'tsauditor[pdf]'`.
+**`zsh: no matches found: tsauditor[pdf]`**: you forgot the quotes. Use `pip install 'tsauditor[pdf]'`.

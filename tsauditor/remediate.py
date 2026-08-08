@@ -550,27 +550,49 @@ def fix(
     The input ``df`` is never modified; ``clean_df`` is an independent copy.
     Pass ``target=`` so the label column is protected from every repair.
 
+    ``available_at=``, ``constraints=``, and ``group_col=`` are passed straight
+    through to ``scan()`` and exist on this signature for the same reason:
+    without them, the checks or repair mode they enable were reachable only by
+    calling ``scan()`` and ``apply_fixes()`` separately, and ``fix()`` would
+    silently skip them with no error -- which read as "nothing wrong" rather
+    than "not checked." ``available_at=`` is required for LEK004 (as-of
+    leakage) to run at all; ``constraints=`` the same for VAL001/VAL002, since
+    tsauditor cannot infer a release schedule or a validity bound on its own.
+    ``group_col=`` is what makes this a one-shot call for panel (long-format,
+    multi-entity) data: every other panel-aware entry point (``scan()``,
+    ``GuardReport.apply_fixes()``, ``health_score()``, ``to_json()``,
+    ``to_pdf()``) already accepted or threaded it; without it here,
+    ``tsa.fix(panel_df, group_col=...)`` raised ``TypeError: unexpected
+    keyword argument``, forcing panel callers back to the two-call form this
+    function exists to avoid. ``apply_fixes`` itself needs no separate
+    argument for this: it reads ``group_col`` back off ``report.metadata``,
+    which ``scan()`` populates.
+
     Parameters
     ----------
-    df, target, time_col, domain, available_at, constraints, group_col
-        Passed through to ``scan``. Without ``available_at=``, LEK004 (as-of
-        leakage) never runs; without ``constraints=``, VAL001/VAL002 never
-        run — both are opt-in because tsauditor cannot infer a release
-        schedule or a validity bound on its own. Before this, the only way to
-        exercise either check together with a one-shot repair was to call
-        ``scan()`` and ``apply_fixes()`` separately; ``fix()`` silently
-        skipped them with no error, which read as "nothing wrong" rather
-        than "not checked." ``group_col`` was the same story for panel
-        (long-format, multi-entity) data: every other panel-aware entry
-        point (``scan()``, ``GuardReport.apply_fixes()``, ``health_score()``,
-        ``to_json()``, ``to_pdf()``) accepted or threaded it, but ``fix()``
-        itself had no parameter for it at all -- ``tsa.fix(panel_df,
-        group_col=...)`` raised ``TypeError: unexpected keyword argument``,
-        forcing panel users to always fall back to the two-call form this
-        function exists to avoid. ``apply_fixes`` itself needs no separate
-        argument for this: it reads ``group_col`` back off
-        ``report.metadata``, which ``scan()`` populates.
-    missing, outliers, stuck, leakage, verbose
+    df : pd.DataFrame
+        Passed through to ``scan``.
+    target : str | None
+        Passed through to ``scan``.
+    time_col : str | None
+        Passed through to ``scan``.
+    domain : str | None
+        Passed through to ``scan``.
+    available_at : dict | None
+        Passed through to ``scan``; see above for why it matters here.
+    constraints : dict | None
+        Passed through to ``scan``; see above for why it matters here.
+    group_col : str | None
+        Passed through to ``scan``; see above for why it matters here.
+    missing : str | None
+        Passed through to ``apply_fixes``.
+    outliers : str | None
+        Passed through to ``apply_fixes``.
+    stuck : str | None
+        Passed through to ``apply_fixes``.
+    leakage : str | None
+        Passed through to ``apply_fixes``.
+    verbose : bool
         Passed through to ``apply_fixes``.
 
     Returns

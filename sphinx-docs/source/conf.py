@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
+
+html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "")
 
 # Make the repo's tsauditor/ package importable without installing it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))

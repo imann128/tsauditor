@@ -473,6 +473,8 @@ Featured in [PyCoder's Weekly Issue #745](https://pycoders.com/issues/745)
 
 Featured #7 on [Data Science Weekly Issue - 657](https://datascienceweekly.substack.com/p/data-science-weekly-issue-657)
 
+Featured on [Python Digest Russia Issue - 659](https://pythondigest.ru/issue/659/)
+
 Featured on [Python Hub](https://pythonhub.dev)
 
 ## Status

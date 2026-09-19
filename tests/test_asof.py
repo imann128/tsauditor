@@ -137,3 +137,31 @@ def test_bad_spec_type_raises():
     df = pd.DataFrame({"cpi": np.arange(10.0)}, index=_idx(10))
     with pytest.raises(ValueError, match="Series .* or a pandas Timedelta"):
         audit_asof_leakage(df, {"cpi": 14})  # int, not Timedelta/Series
+
+
+# ── tz mismatch guard (full-sweep finding) ─────────────────────────────────
+#
+# The guard used to compare tzinfo objects directly (index.tz != avail.dt.tz),
+# which also raised on two *different but both aware* timezones, even though
+# pandas compares those just fine by converting to a common instant. It
+# should only raise on a genuine aware/naive mismatch.
+
+
+def test_different_but_both_aware_timezones_do_not_raise():
+    """Regression. UTC index vs. US/Eastern availability -- both tz-aware,
+    perfectly comparable -- must not be rejected as a 'mismatch'."""
+    idx = _idx(50).tz_localize("UTC")
+    df = pd.DataFrame({"cpi": np.arange(50.0)}, index=idx)
+    # published one day before, but expressed in a different (aware) tz
+    avail = pd.Series(idx - pd.Timedelta(days=1), index=idx).dt.tz_convert("US/Eastern")
+    issues = audit_asof_leakage(df, {"cpi": avail})
+    assert issues == []  # published before use in both timezones -> clean
+
+
+def test_aware_vs_naive_still_raises():
+    """The genuine mismatch this guard exists for must still be caught."""
+    idx = _idx(50).tz_localize("UTC")
+    df = pd.DataFrame({"cpi": np.arange(50.0)}, index=idx)
+    naive_avail = pd.Series(pd.Timestamp("2020-01-01") - pd.Timedelta(days=1), index=idx)
+    with pytest.raises(ValueError, match="timezone mismatch"):
+        audit_asof_leakage(df, {"cpi": naive_avail})

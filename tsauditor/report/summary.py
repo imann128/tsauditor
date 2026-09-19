@@ -203,7 +203,7 @@ class GuardReport:
 
     def prevalence(self) -> List[Dict[str, Any]]:
         """
-        How widely each finding occurs across entities — the headline output of
+        How widely each finding occurs across entities: the headline output of
         a panel scan.
 
         A panel of 500 entities can produce tens of thousands of issues, which
@@ -276,7 +276,7 @@ class GuardReport:
     def leaky_columns(self) -> List[str]:
         """
         Columns flagged by the leakage module, plus PNL002 (cross-sectional
-        lookahead) — the features to review/remove first. The library never
+        lookahead): the features to review/remove first. The library never
         drops them for you; this is the shortlist.
 
         PNL002 is tagged ``module="panel"`` rather than ``"leakage"`` because
@@ -290,7 +290,7 @@ class GuardReport:
 
     def suggestions(self) -> List[Dict[str, Any]]:
         """
-        Per-issue suggested actions, ordered by severity. Advisory only —
+        Per-issue suggested actions, ordered by severity. Advisory only:
         tsauditor reports and recommends but never edits your data.
         """
         return [
@@ -354,13 +354,22 @@ class GuardReport:
     def health_score(self, df) -> float:
         """
         Data Health Score for ``df``: percent of numeric cells not implicated by
-        any quality issue (missing/outlier/spike/stuck). Leakage is excluded — it
+        any quality issue (missing/outlier/spike/stuck). Leakage is excluded: it
         is a modeling risk, not corrupt data.
 
-        This re-scans ``df`` so the score always reflects the frame you pass —
+        This re-scans ``df`` so the score always reflects the frame you pass,
         e.g. call it on an ``apply_fixes`` output to get the true "after" score.
         (Reusing this report's issues would be stale for a repaired frame.) The
         re-scan skips the leakage and ADF checks, which don't affect the score.
+
+        The detector tuning this report's original ``scan()`` call used
+        (``zscore_threshold``, ``stuck_window``, ``spike_threshold``,
+        ``spike_window``, ``handle_missing``) is threaded through here too,
+        not just ``target``/``domain``/``group_col`` -- otherwise this
+        re-scan (and the mask ``affected_cells()`` recomputes from it)
+        would silently fall back to the domain-only preset regardless of
+        any explicit override the original scan used, scoring against
+        issues this fresh scan wouldn't even raise the same way.
         """
         from tsauditor import scan
         from tsauditor.remediate import health_score as _health_score
@@ -370,23 +379,55 @@ class GuardReport:
             target=self.metadata.get("target"),
             domain=self.metadata.get("domain"),
             group_col=self.metadata.get("group_col"),
+            zscore_threshold=self.metadata.get("zscore_threshold"),
+            stuck_window=self.metadata.get("stuck_window"),
+            spike_threshold=self.metadata.get("spike_threshold"),
+            spike_window=self.metadata.get("spike_window"),
+            handle_missing=self.metadata.get("handle_missing") or "strict",
             run_leakage=False,
             run_stationarity=False,
         )
         return _health_score(fresh, df)
 
-    def to_pdf(self, path, df=None, fixed_df=None, title=None):
+    def to_pdf(
+        self,
+        path,
+        df=None,
+        fixed_df=None,
+        title=None,
+        include_correlation_heatmap=True,
+        heatmap_max_lag=10,
+        heatmap_top_n=30,
+    ):
         """
         Export a formal, text-selectable PDF report (Times New Roman, black,
-        tables, no charts). Requires the optional ``[pdf]`` extra
+        mostly tables). Requires the optional ``[pdf]`` extra
         (``pip install 'tsauditor[pdf]'``).
 
         Pass ``df`` for the Data Health Score, and ``fixed_df`` (e.g. the output
         of ``apply_fixes``) for a before/after comparison.
+
+        When ``df`` is given and ``self.metadata['target']`` is set (and this
+        is not a panel report), a lead/lag cross-correlation heatmap page is
+        appended: the one chart in an otherwise black-and-white report; see
+        ``tsauditor.report.pdf``'s module docstring for why. Set
+        ``include_correlation_heatmap=False`` to omit it, or tune
+        ``heatmap_max_lag`` (lags shown, default 10, matching LEK002's
+        default) and ``heatmap_top_n`` (features shown, ranked by peak
+        |correlation|, default 30) to fit a wide frame.
         """
         from tsauditor.report.pdf import export_pdf
 
-        return export_pdf(self, path, df=df, fixed_df=fixed_df, title=title)
+        return export_pdf(
+            self,
+            path,
+            df=df,
+            fixed_df=fixed_df,
+            title=title,
+            include_correlation_heatmap=include_correlation_heatmap,
+            heatmap_max_lag=heatmap_max_lag,
+            heatmap_top_n=heatmap_top_n,
+        )
 
     # ── Output methods ────────────────────────────────────────────────────────
 
@@ -423,7 +464,7 @@ class GuardReport:
             console.print("[green]No issues detected.[/green]\n")
             return
 
-        # For a panel, listing every issue is unreadable — 500 entities can
+        # For a panel, listing every issue is unreadable: 500 entities can
         # produce tens of thousands of rows. Show prevalence instead: what
         # fraction of entities each finding affects.
         if self.is_panel:
@@ -450,7 +491,7 @@ class GuardReport:
 
         console.print(table)
 
-        # Suggested actions (advisory — no data is modified)
+        # Suggested actions (advisory, no data is modified)
         console.print("\n[bold]Suggested actions[/bold]")
         for issue in self.all_issues:
             where = f" [dim]({issue.column})[/dim]" if issue.column else ""
@@ -481,7 +522,7 @@ class GuardReport:
 
         console.print(table)
         console.print(
-            "\n[dim]A finding at 100% is systemic — suspect the pipeline, not "
+            "\n[dim]A finding at 100% is systemic: suspect the pipeline, not "
             "the entities. Use report.filter(group=...) to drill in, and "
             "report.groups_affected(code=..., column=...) for the full list."
             "[/dim]\n"
@@ -489,7 +530,7 @@ class GuardReport:
 
     def to_json(self, path: str, df=None, fixed_df=None) -> None:
         """
-        Export the full report to a JSON file — the machine-readable companion
+        Export the full report to a JSON file: the machine-readable companion
         to ``to_pdf``.
 
         Parameters
@@ -542,12 +583,19 @@ class GuardReport:
                 # different scale. run_leakage/run_stationarity are also
                 # dropped here to match health_score()'s own re-scan --
                 # neither affects the score, and ADF is the most expensive
-                # check in the whole pipeline.
+                # check in the whole pipeline. The five detector-tuning
+                # settings are threaded through for the identical reason
+                # given in health_score()'s own docstring above.
                 after_report = scan(
                     fixed_df,
                     target=self.metadata.get("target"),
                     domain=self.metadata.get("domain"),
                     group_col=self.metadata.get("group_col"),
+                    zscore_threshold=self.metadata.get("zscore_threshold"),
+                    stuck_window=self.metadata.get("stuck_window"),
+                    spike_threshold=self.metadata.get("spike_threshold"),
+                    spike_window=self.metadata.get("spike_window"),
+                    handle_missing=self.metadata.get("handle_missing") or "strict",
                     run_leakage=False,
                     run_stationarity=False,
                 )

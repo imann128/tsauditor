@@ -4,17 +4,25 @@ tsauditor.report.pdf
 PDF export for a GuardReport. This is the only module that imports matplotlib,
 gated behind the optional ``[pdf]`` extra.
 
-The report is a formal black-and-white document: serif (Times New Roman) text,
-black throughout, clear section headings, and tables where the content is
-tabular. It contains no charts and no colour coding. The output is vector and
-text-selectable, so it copies and OCRs cleanly (e.g. AWS Textract). The
-machine-readable companion is ``GuardReport.to_json``.
+The report is a formal document: serif (Times New Roman) text, black
+throughout, clear section headings, and tables where the content is tabular.
+The output is vector and text-selectable, so it copies and OCRs cleanly (e.g.
+AWS Textract). The machine-readable companion is ``GuardReport.to_json``.
+
+One deliberate exception to "no charts, no colour": the lead/lag
+cross-correlation heatmap (see ``_correlation_heatmap_fig``). A grid of
+signed correlations is not usefully readable as a table at any width that
+fits a page, and colour is what makes a positive-vs-negative lag peak visible
+at a glance. Everything else in the report stays black-and-white tabular by
+design; this page is the one place a chart earns its keep.
 
 Layout
 ------
 Scorecard (health score, dataset overview, before/after, leakage callout,
 executive summary) and the Detected Issues table share the first page when the
-issue list is short; long lists spill onto continuation pages.
+issue list is short; long lists spill onto continuation pages. The lead/lag
+heatmap (when applicable, see ``export_pdf``'s ``include_correlation_heatmap``)
+is its own page at the end.
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ from __future__ import annotations
 import textwrap
 from typing import List, Optional
 
+import numpy as np
 import pandas as pd
 
 from tsauditor.remediate import health_score
@@ -198,6 +207,90 @@ def _prevalence_table(fig, left, top, width, rows, fontsize=8) -> None:
     _style(table, fontsize)
 
 
+def _correlation_heatmap_fig(plt, matrix_df: pd.DataFrame, target: str, top_n: int):
+    """
+    Build the lead/lag cross-correlation heatmap page.
+
+    ``matrix_df`` is expected to come straight from
+    ``tsauditor.leakage.correlation.lag_correlation_matrix``: the same grid
+    LEK002 searches for a positive-lag peak. Rows are ranked by peak |r|
+    across lags and truncated to ``top_n`` so a wide frame doesn't produce an
+    unreadable (or un-renderable) page; the truncation is stated on the page
+    itself rather than silently dropping features.
+
+    Cells with no value (fewer than ``min_obs`` overlapping observations at
+    that lag, or a constant subset) are left blank rather than shown as 0:
+    a blank cell and a measured-zero correlation are not the same claim.
+    """
+    peak_abs = matrix_df.abs().max(axis=1, skipna=True)
+    ranked = peak_abs.sort_values(ascending=False)
+    selected = ranked.index[:top_n]
+    sub = matrix_df.loc[selected]
+    truncated = len(selected) < len(matrix_df)
+
+    lags = list(sub.columns)
+    zero_col = lags.index(0) if 0 in lags else None
+
+    fig = plt.figure(figsize=_A4)
+    fig.text(0.08, 0.955, "Lead/Lag Cross-Correlation Heatmap", fontsize=14, weight="bold")
+    subtitle = (
+        f"Spearman correlation of each feature with target '{target}' across "
+        f"lags {lags[0]} to {lags[-1]}. Positive lag = feature aligns with "
+        f"future target values (LEK002 territory)."
+    )
+    y_note = 0.935
+    for line in textwrap.wrap(subtitle, width=95):
+        fig.text(0.08, y_note, line, fontsize=8.5)
+        y_note -= 0.017
+    y_note -= 0.001
+    if truncated:
+        fig.text(
+            0.08,
+            y_note,
+            f"Showing top {len(selected)} of {len(matrix_df)} features by peak |correlation|.",
+            fontsize=8,
+            style="italic",
+        )
+        y_note -= 0.016
+    fig.text(
+        0.08,
+        y_note,
+        "Blank cells: fewer than min_obs overlapping observations at that lag, "
+        "or a constant subset (undefined, not zero).",
+        fontsize=8,
+        style="italic",
+    )
+
+    # Top-anchor the plot right below the header text instead of pinning it
+    # to the bottom margin: with few rows, a bottom-anchored axes leaves a
+    # large dead gap between the notes and the chart.
+    n_rows = max(len(sub), 1)
+    top = y_note - 0.03
+    height = min(0.03 * n_rows + 0.08, top - _BOTTOM)
+    bottom = top - height
+
+    ax = fig.add_axes([0.30, bottom, 0.55, height])
+    masked = np.ma.masked_invalid(sub.to_numpy(dtype=float))
+    im = ax.imshow(masked, aspect="auto", cmap="RdBu_r", vmin=-1, vmax=1, interpolation="nearest")
+    im.cmap.set_bad(color="0.85")  # blank cells render as light grey, not white-on-white
+
+    ax.set_yticks(range(len(sub)))
+    ax.set_yticklabels(list(sub.index), fontsize=7)
+    step = max(1, len(lags) // 15)  # thin x labels so they don't overlap on wide max_lag
+    ax.set_xticks(range(0, len(lags), step))
+    ax.set_xticklabels([str(lags[i]) for i in range(0, len(lags), step)], fontsize=7)
+    ax.set_xlabel("Lag (periods)", fontsize=9)
+    if zero_col is not None:
+        ax.axvline(zero_col, color="black", lw=0.8, linestyle="--")
+
+    cax = fig.add_axes([0.87, bottom, 0.02, height])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label("Spearman r", fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+
+    return fig
+
+
 def _capacity(top: float) -> int:
     """How many table rows (issues or prevalence rows) fit between ``top`` and
     the bottom margin. Both tables share the same fixed row height (_ROW_H),
@@ -211,7 +304,23 @@ def export_pdf(
     df: Optional[pd.DataFrame] = None,
     fixed_df: Optional[pd.DataFrame] = None,
     title: Optional[str] = None,
+    include_correlation_heatmap: bool = True,
+    heatmap_max_lag: int = 10,
+    heatmap_top_n: int = 30,
 ) -> str:
+    """
+    Render ``report`` (and optionally ``df``/``fixed_df``) as a PDF at ``path``.
+
+    ``include_correlation_heatmap``, ``heatmap_max_lag``, ``heatmap_top_n``
+    control the lead/lag cross-correlation heatmap page (see
+    ``_correlation_heatmap_fig``). It only renders when all of the following
+    hold: ``include_correlation_heatmap`` is True, ``df`` is given,
+    ``report.metadata['target']`` is set and present in ``df``'s columns, and
+    the report is not a panel scan: cross-sectional panel data needs its own
+    aggregation story (per-entity vs. pooled) that this page does not yet
+    provide, so a panel report gets a one-line note instead of a
+    silently-wrong pooled heatmap.
+    """
     plt, PdfPages = _require_matplotlib()
     meta = report.metadata
     title = title or "Time-Series Data Health Report"
@@ -228,12 +337,20 @@ def export_pdf(
         # would recompute masks on values mixed across entities of very
         # different scale). This is the same fix as summary.py's
         # GuardReport.to_json() -- a separate, independent copy of the same
-        # re-scan that had the same gap.
+        # re-scan that had the same gap. The five detector-tuning settings
+        # are threaded through for the same reason: without them this
+        # re-scan silently falls back to the domain-only preset regardless
+        # of any explicit override the original scan() call used.
         after_report = scan(
             fixed_df,
             target=meta.get("target"),
             domain=meta.get("domain"),
             group_col=meta.get("group_col"),
+            zscore_threshold=meta.get("zscore_threshold"),
+            stuck_window=meta.get("stuck_window"),
+            spike_threshold=meta.get("spike_threshold"),
+            spike_window=meta.get("spike_window"),
+            handle_missing=meta.get("handle_missing") or "strict",
             run_leakage=False,
             run_stationarity=False,
         )
@@ -336,7 +453,7 @@ def export_pdf(
         )
         y -= 0.04
 
-        # Issues table — on this page if it fits, otherwise continuation pages.
+        # Issues table: on this page if it fits, otherwise continuation pages.
         #
         # Panel scans use the prevalence view (one row per finding, with how
         # many entities it hits) instead of report.all_issues. A 500-entity
@@ -369,6 +486,16 @@ def export_pdf(
                 style="italic",
             )
             y -= 0.018
+            if include_correlation_heatmap and meta.get("target") is not None:
+                fig.text(
+                    0.08,
+                    y,
+                    "Lead/lag correlation heatmap is not yet available for panel "
+                    "scans (per-entity vs. pooled aggregation is undecided).",
+                    fontsize=8,
+                    style="italic",
+                )
+                y -= 0.018
         cap = _capacity(y)
         table_fn(fig, 0.08, y, 0.84, rows_to_render[:cap])
         pdf.savefig(fig)
@@ -383,6 +510,37 @@ def export_pdf(
             table_fn(fig, 0.08, 0.92, 0.84, chunk)
             pdf.savefig(fig)
             plt.close(fig)
+
+        # Lead/lag cross-correlation heatmap: its own page, at the end, and
+        # only when there's a target to correlate against, a df to compute it
+        # from, and this isn't a panel report (see export_pdf's docstring).
+        target = meta.get("target")
+        if (
+            include_correlation_heatmap
+            and df is not None
+            and target is not None
+            and not report.is_panel
+            and target in df.columns
+        ):
+            from tsauditor.leakage.correlation import lag_correlation_matrix
+
+            try:
+                matrix_df = lag_correlation_matrix(
+                    df, target=target, max_lag=heatmap_max_lag
+                )
+            except ValueError:
+                # Same failure modes lag_correlation_matrix's own validation
+                # already raises for (e.g. a non-binary categorical target
+                # slipping through): a PDF export must not crash over a
+                # bonus page when the rest of the report rendered fine.
+                matrix_df = None
+
+            if matrix_df is not None and not matrix_df.empty and matrix_df.notna().any().any():
+                heat_fig = _correlation_heatmap_fig(
+                    plt, matrix_df, target, heatmap_top_n
+                )
+                pdf.savefig(heat_fig)
+                plt.close(heat_fig)
 
         info = pdf.infodict()
         info["Title"] = title

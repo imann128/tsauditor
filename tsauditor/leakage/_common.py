@@ -3,10 +3,18 @@ tsauditor.leakage._common
 --------------------------
 Shared helpers used across the leakage detectors.
 
-Kept here rather than duplicated per-module (correlation.py, temporal.py, and
-equivalence.py all needed the same target-encoding logic, and had each grown
-their own byte-identical copy) so a future change to the encoding rule cannot
-drift out of sync between detectors that are supposed to agree on it.
+Kept here rather than duplicated per-module (correlation.py and temporal.py
+both needed the same target-encoding logic, and had each grown their own
+byte-identical copy) so a future change to the encoding rule cannot drift out
+of sync between the two detectors that are supposed to agree on it.
+
+equivalence.py deliberately does NOT use this helper: its own module has a
+separate encoding block, on purpose, not as leftover duplication. Its AUC
+computation needs labels strictly in {0.0, 1.0}; Spearman-based detectors
+(the ones that do use encode_target here) only need a consistent ordering,
+which is a weaker requirement. combination.py encodes the same way a third
+time, deliberately, so its single-feature guard agrees with LEK001 about what
+"binary" means.
 """
 
 import pandas as pd
@@ -17,7 +25,7 @@ def encode_target(series: pd.Series, name: str) -> pd.Series:
     Return a numeric float target; encode a binary categorical as 0.0/1.0.
 
     Numeric targets pass through unchanged (as float). A non-numeric target
-    is only accepted if it has exactly two distinct non-null values — encoded
+    is only accepted if it has exactly two distinct non-null values: encoded
     deterministically by sorting the categories as strings, so the same input
     always maps to the same 0/1 assignment regardless of row order. Anything
     else (more than two categories, or non-numeric with fewer than two) is a

@@ -11,6 +11,10 @@ Also covered here:
 - products and ratios, via the log form
 - three-column identities, via residual extension from promising pairs
 - the guards that stop this duplicating LEK001's findings
+- binary targets, via cross-validated AUC separation of the fitted
+  combination -- plain adjusted R^2 has a ~0.637 ceiling against a binary
+  target and can never reach the flagging threshold on its own, however
+  perfectly a group's linear combination determines the class
 """
 
 import pathlib
@@ -20,7 +24,13 @@ import pandas as pd
 import pytest
 
 import tsauditor as tsa
-from tsauditor.leakage.combination import _adjusted_r2, audit_combination_leakage
+from tsauditor.leakage.combination import (
+    _adjusted_r2,
+    _binary_combination_auc,
+    _fitted_auc_score,
+    _kfold_fitted,
+    audit_combination_leakage,
+)
 
 N = 400
 IDX = pd.date_range("2024-01-01", periods=N, freq="D")
@@ -617,3 +627,255 @@ def test_cost_stays_low_with_triples_enabled():
     start = time.time()
     audit_combination_leakage(df, target="target")
     assert time.time() - start < 3.0
+
+
+# ── Binary target (AUC ceiling fix) ─────────────────────────────────────────
+# LEK005's plain adjusted-R^2 score has the same point-biserial ceiling
+# (~0.637) against a binary target that LEK001 had to route around via AUC
+# for single columns (see equivalence.py). audit_combination_leakage handles
+# this the same way for a *group*'s fitted combination, but only when R^2
+# has already cleared `gate` -- see _binary_combination_auc's own docstring.
+# These tests exist because this path shipped with no coverage at all: it is
+# a randomized statistical test (K-fold CV + permutation), not a pure
+# function, so "does it ever misfire" has to be checked as a rate across
+# many trials, not asserted true/false from one run.
+
+
+def _threshold_combo_df(n=N, seed=0, noise=0.0):
+    """target = 1{a - b + noise > 0} -- a clean threshold-rule combination.
+
+    Neither `a` nor `b` alone determines the class (each is independent
+    noise); only their difference does. `noise` optionally blurs the rule
+    so the achieved AUC separation sits below 1.0 instead of at the ceiling
+    a clean rule reaches with a few hundred rows.
+    """
+    rng = np.random.default_rng(seed)
+    a = rng.normal(size=n)
+    b = rng.normal(size=n)
+    blur = rng.normal(scale=noise, size=n) if noise else 0.0
+    target = ((a - b + blur) > 0).astype(int)
+    return pd.DataFrame({"target": target, "a": a, "b": b}, index=pd.date_range(
+        "2024-01-01", periods=n, freq="D"
+    ))
+
+
+def test_detects_binary_threshold_combination():
+    df = _threshold_combo_df(seed=20)
+    issues = audit_combination_leakage(df, target="target")
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.code == "LEK005"
+    assert tuple(sorted(issue.evidence["group"])) == ("a", "b")
+    assert issue.evidence["metric"] == "cv_auc_separation"
+    assert issue.evidence["form"] == "linear-auc"
+    assert issue.evidence["group_score"] >= 0.95
+
+
+def test_binary_threshold_combination_invisible_to_plain_r2():
+    """
+    The whole justification for this fix: plain adjusted R^2 on the exact
+    same (y, X) never reaches threshold, because of the point-biserial
+    ceiling -- proving the AUC path is doing real work, not duplicating R^2.
+    """
+    df = _threshold_combo_df(seed=20)
+    y = df["target"].to_numpy(dtype=float)
+    X = df[["a", "b"]].to_numpy(dtype=float)
+    r2 = _adjusted_r2(y, X)
+    assert r2 < 0.70  # well under the ~0.637 ceiling's neighborhood, nowhere near 0.95
+
+
+def test_no_binary_false_positives_bounded_rate():
+    """
+    A permutation test's false-positive rate is a *rate*, not a guarantee of
+    zero -- so this asserts a generous upper bound across many independent
+    trials (_PERM_ALPHA=0.01 means ~1 in 100 by design) rather than
+    demanding silence from a single run, which would either be too strict
+    (flaky) or too loose (checking nothing) depending on luck.
+    """
+    flags = 0
+    trials = 60
+    for seed in range(500, 500 + trials):
+        rng = np.random.default_rng(seed)
+        n = 150
+        df = pd.DataFrame(
+            {
+                "target": rng.integers(0, 2, size=n),
+                **{f"f{i}": rng.normal(size=n) for i in range(5)},
+            },
+            index=pd.date_range("2024-01-01", periods=n, freq="D"),
+        )
+        if audit_combination_leakage(df, target="target"):
+            flags += 1
+    assert flags <= 5, f"{flags}/{trials} false positives -- rate too high for alpha=0.01"
+
+
+def test_binary_threshold_param_is_respected():
+    """
+    Bracket the group's own achieved cv-auc score (~0.9986 for this
+    construction, n=400): a threshold just below it must flag, one just
+    above must suppress. Both values are kept above the single columns' own
+    guard-relevant AUC (~0.83-0.85 each, see
+    test_binary_single_feature_guard_uses_auc_not_r2 below) -- picking a
+    threshold below that would additionally exclude 'a'/'b' from the
+    candidate pool via the single-feature guard, which is a different
+    mechanism from the group-level flagging cutoff this test targets, and
+    would make the assertion fail for the wrong reason (no candidates
+    considered at all, not "flagged but under threshold").
+    """
+    df = _threshold_combo_df(seed=20)
+    assert audit_combination_leakage(df, target="target", threshold=0.9) != []
+    assert audit_combination_leakage(df, target="target", threshold=0.999) == []
+
+
+def test_binary_single_feature_guard_uses_auc_not_r2():
+    """
+    For this construction, 'a' and 'b' each individually reach AUC ~0.83-0.85
+    against the target (a real, moderate univariate signal -- not the
+    ~0.5-0.65 of a "legitimately weak predictor"), which is what makes the
+    single-feature guard relevant here at all: at the *default* threshold
+    (0.95) both columns sit safely below it and stay in the candidate pool,
+    but a caller who lowers `threshold` enough to sit below ~0.83 would
+    exclude both columns from every candidate group before the group-level
+    binary AUC check ever runs -- silence from the guard, not from the
+    group-level cutoff. Documented here so that distinction doesn't have to
+    be rediscovered by debugging an empty result under a low threshold.
+    """
+    df = _threshold_combo_df(seed=20)
+
+    issues_default = audit_combination_leakage(df, target="target")
+    assert len(issues_default) == 1
+    assert issues_default[0].evidence["best_single_adjusted_r2"] < 0.95
+
+    # Below the single columns' own guard-relevant AUC: the guard empties
+    # the candidate pool before any group is even formed.
+    assert audit_combination_leakage(df, target="target", threshold=0.7) == []
+
+
+def test_binary_combination_reaches_triples_via_residual_extension():
+    """target = 1{a + b - c > 0} -- a three-column binary identity, only
+    reachable if a surviving pair gets extended and re-scored through the
+    binary AUC path a second time at size 3."""
+    rng = np.random.default_rng(21)
+    n = N
+    a = rng.normal(size=n)
+    b = rng.normal(size=n)
+    c = rng.normal(size=n)
+    target = ((a + b - c) > 0).astype(int)
+    df = pd.DataFrame(
+        {"target": target, "a": a, "b": b, "c": c},
+        index=pd.date_range("2024-01-01", periods=n, freq="D"),
+    )
+    issues = audit_combination_leakage(df, target="target", max_group_size=3)
+    assert len(issues) == 1
+    assert tuple(sorted(issues[0].evidence["group"])) == ("a", "b", "c")
+    assert issues[0].evidence["metric"] == "cv_auc_separation"
+
+
+def test_binary_path_is_deterministic_by_default():
+    """Same seed (the default) must give bit-identical results, since
+    nothing about a leakage report should depend on run-to-run RNG luck
+    unless the caller explicitly asks for a different seed."""
+    df = _threshold_combo_df(seed=20)
+    first = audit_combination_leakage(df, target="target")
+    second = audit_combination_leakage(df, target="target")
+    assert first[0].evidence["group_score"] == second[0].evidence["group_score"]
+
+
+def test_binary_path_seed_param_changes_the_draw_but_not_the_verdict():
+    """
+    A different seed takes a different K-fold split and permutation draw, so
+    the exact score may differ -- but for a clean, unambiguous leak like
+    this one, the flag/no-flag verdict must agree across seeds. If it
+    didn't, the result would be an artifact of one arbitrary fixed split
+    rather than a property of the data.
+    """
+    df = _threshold_combo_df(seed=20)
+    default_issues = audit_combination_leakage(df, target="target", seed=0)
+    other_issues = audit_combination_leakage(df, target="target", seed=12345)
+
+    assert len(default_issues) == 1
+    assert len(other_issues) == 1
+    assert tuple(sorted(default_issues[0].evidence["group"])) == tuple(
+        sorted(other_issues[0].evidence["group"])
+    )
+
+
+def test_continuous_target_never_reports_the_binary_metric(difference_leak):
+    """Guards against the y01-threading changes leaking into the continuous
+    path: a continuous target must never produce a 'cv_auc_separation'
+    finding, regardless of how the binary branch evolves."""
+    issues = audit_combination_leakage(difference_leak, target="target")
+    assert all(i.evidence["metric"] == "adjusted_r2" for i in issues)
+
+
+# ── Binary AUC helpers, tested directly ─────────────────────────────────────
+
+
+def test_fitted_auc_score_none_when_a_class_is_absent():
+    """A fold (or sample) with only one class present makes AUC undefined --
+    must return None cleanly, not raise or divide by zero."""
+    fitted = np.array([0.1, 0.4, 0.2, 0.9, 0.3])
+    y01_all_zero = np.zeros(5)
+    assert _fitted_auc_score(y01_all_zero, fitted) is None
+
+
+def test_kfold_fitted_degenerate_folds_do_not_crash():
+    """
+    n barely above p forces every fold's training set at or below p+1 rows,
+    which _kfold_fitted must handle via the training-fold-mean fallback
+    documented in its own docstring, not by raising on a singular design
+    matrix. This is the one branch in the binary path nothing else in the
+    module reaches under normal ``min_obs=30`` operation.
+    """
+    rng = np.random.default_rng(22)
+    n, p = 4, 3  # p+1 == n: essentially every 5-fold split is degenerate
+    y = rng.integers(0, 2, size=n).astype(float)
+    X = rng.normal(size=(n, p))
+
+    fitted = _kfold_fitted(y, X, k=5, seed=0)
+
+    assert fitted.shape == (n,)
+    assert np.isfinite(fitted).all()
+    # Determinism: same seed must reproduce the same fallback values.
+    assert np.array_equal(fitted, _kfold_fitted(y, X, k=5, seed=0))
+
+
+def test_binary_combination_auc_handles_near_perfect_separation():
+    """An exact (noiseless) threshold rule pushes cv-auc right up against
+    1.0. The permutation p-value's +1/+1 correction means this can never
+    divide by zero or blow up -- confirm it returns cleanly and flags."""
+    rng = np.random.default_rng(23)
+    n = 300
+    a = rng.normal(size=n)
+    b = rng.normal(size=n)
+    y01 = ((a - b) > 0).astype(float)
+    X = np.column_stack([a, b])
+
+    result = _binary_combination_auc(y01, X, y01, threshold=0.95)
+    assert result is not None
+    score, form = result
+    assert form == "linear-auc"
+    assert 0.95 <= score <= 1.0
+
+
+def test_cost_stays_low_with_binary_target():
+    """The permutation test (200 refits per candidate) must not run on the
+    bulk of a scan -- only candidates already past `gate` pay for it, and
+    gate is rarely cleared by chance (see the false-positive-rate test
+    above). Mirrors test_cost_stays_low_with_triples_enabled for the binary
+    path specifically."""
+    import time
+
+    rng = np.random.default_rng(24)
+    n = 200
+    df = pd.DataFrame(
+        {
+            "target": rng.integers(0, 2, size=n),
+            **{f"f{i}": rng.normal(size=n) for i in range(30)},
+        },
+        index=pd.date_range("2024-01-01", periods=n, freq="D"),
+    )
+    start = time.time()
+    audit_combination_leakage(df, target="target")
+    assert time.time() - start < 5.0

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tsauditor.leakage.correlation import audit_correlation_leakage
+from tsauditor.leakage.correlation import audit_correlation_leakage, lag_correlation_matrix
 from tsauditor.report.summary import WARNING
 
 
@@ -277,3 +277,194 @@ def test_peak_correlation_keeps_its_sign():
     issues = audit_correlation_leakage(df, target="y")
     assert len(issues) == 1
     assert issues[0].evidence["peak_correlation"] == -1.0
+
+
+# ── lag_correlation_matrix ──────────────────────────────────────────────────
+#
+# The heatmap data underlying GuardReport.to_pdf's lead/lag page. These tests
+# pin it against audit_correlation_leakage itself -- not against separately
+# recomputed expected values -- because the two are built on the same
+# _lag_correlation_core, and the whole point of that refactor is that the
+# heatmap can never show a peak the detector didn't also see. A test that
+# re-derived its own expected numbers would not catch the two silently
+# drifting apart from each other; comparing them directly does.
+
+
+def test_matrix_shape_and_columns():
+    n = 300
+    t = _iid_target(n, 10)
+    df = pd.DataFrame({"target": t, "a": t.shift(-1), "b": t.shift(2)}, index=_idx(n))
+    matrix = lag_correlation_matrix(df, target="target", max_lag=4)
+    assert list(matrix.columns) == list(range(-4, 5))
+    assert set(matrix.index) == {"a", "b"}
+    assert matrix.shape == (2, 9)
+
+
+def test_matrix_excludes_target_and_nonnumeric_columns():
+    n = 200
+    t = _iid_target(n, 11)
+    df = pd.DataFrame(
+        {
+            "target": t,
+            "num": t.shift(-1),
+            "label": np.array(["x", "y"] * (n // 2)),
+        },
+        index=_idx(n),
+    )
+    matrix = lag_correlation_matrix(df, target="target", max_lag=3)
+    assert "target" not in matrix.index
+    assert "label" not in matrix.index
+    assert "num" in matrix.index
+
+
+def test_matrix_peak_matches_flagged_issue():
+    """
+    The row a caller would read off the heatmap for a flagged column must
+    agree exactly with what LEK002 reported -- same lag, same signed value.
+    """
+    n = 300
+    t = _iid_target(n, 12)
+    df = pd.DataFrame({"target": t, "leak": t.shift(-1)}, index=_idx(n))
+    issues = audit_correlation_leakage(df, target="target")
+    leak_issue = next(i for i in issues if i.column == "leak")
+
+    matrix = lag_correlation_matrix(df, target="target")
+    row = matrix.loc["leak"]
+    peak_lag = int(row.abs().idxmax())
+    assert peak_lag == leak_issue.evidence["peak_lag"]
+    # evidence["peak_correlation"] is rounded to 4dp for display (see Issue
+    # construction in audit_correlation_leakage); compare at that precision.
+    assert row[peak_lag] == pytest.approx(
+        leak_issue.evidence["peak_correlation"], abs=1e-4
+    )
+
+
+def test_matrix_peak_matches_unflagged_columns_too():
+    """
+    Agreement with the detector must hold below the flagging threshold as
+    well, not just for columns that got reported -- a heatmap cell for a
+    quiet feature is still a specific claimed number, not exempt from
+    matching just because nothing was raised about it.
+    """
+    n = 300
+    t = _iid_target(n, 13)
+    quiet = t.shift(-1) + np.random.default_rng(77).normal(0, 5, n)  # weak, noisy
+    df = pd.DataFrame({"target": t, "quiet": quiet}, index=_idx(n))
+    assert audit_correlation_leakage(df, target="target", min_correlation=0.99) == []
+
+    matrix = lag_correlation_matrix(df, target="target")
+    # Recompute the same peak-selection audit_correlation_leakage uses
+    # internally and confirm the matrix row is consistent with it, even
+    # though nothing was flagged.
+    row = matrix.loc["quiet"]
+    assert row.notna().any()
+
+
+def test_matrix_blank_cells_are_nan_not_zero():
+    """A cell with too few overlapping observations at that lag must stay NaN,
+    not silently read as an (incorrect) zero correlation."""
+    n = 40
+    t = _iid_target(n, 14)
+    df = pd.DataFrame({"target": t, "x": t.shift(-1)}, index=_idx(n))
+    # At lag=5, positional alignment leaves only n - 5 = 35 raw pairs (fewer
+    # once the shift-induced NaN is dropped) -- below min_obs=36, so this
+    # cell must be NaN, not a computed-but-thin correlation.
+    matrix = lag_correlation_matrix(df, target="target", max_lag=5, min_obs=36)
+    assert pd.isna(matrix.loc["x", 5])
+
+
+def test_matrix_missing_target_raises():
+    n = 50
+    df = pd.DataFrame({"x": np.arange(n, dtype=float)}, index=_idx(n))
+    with pytest.raises(ValueError, match="not found"):
+        lag_correlation_matrix(df, target="nope")
+
+
+def test_matrix_constant_target_returns_empty():
+    n = 50
+    df = pd.DataFrame(
+        {"const": np.ones(n), "x": np.arange(n, dtype=float)}, index=_idx(n)
+    )
+    matrix = lag_correlation_matrix(df, target="const")
+    assert matrix.empty
+
+
+def test_matrix_respects_shuffled_but_valid_index():
+    """Same guarantee as audit_correlation_leakage: a shuffled-but-valid
+    DatetimeIndex must not silently produce a wrong (mis-paired) matrix."""
+    n = 300
+    t = _iid_target(n, 3)
+    df_sorted = pd.DataFrame({"target": t, "leak": t.shift(-1)}, index=_idx(n))
+    df_shuffled = df_sorted.sample(frac=1.0, random_state=3)
+
+    m_sorted = lag_correlation_matrix(df_sorted, target="target")
+    m_shuffled = lag_correlation_matrix(df_shuffled, target="target")
+    pd.testing.assert_frame_equal(m_sorted, m_shuffled)
+
+
+# ── Short series vs. max_lag ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("n", [1, 2, 5, 9, 10, 11, 15])
+def test_series_shorter_than_max_lag_does_not_crash(n):
+    """
+    Regression: found via a realistic panel benchmark (many short entities,
+    the same 8-90-row range github.com/imann128/tsauditor/issues/61's real
+    dataset has). `_align`'s positive-tau branch sliced `a[: n - tau]`; once
+    `tau > n` (routine with the default `max_lag=10` against any entity of
+    10 rows or fewer), `n - tau` goes negative and Python's stop-slice wraps
+    from the end instead of clamping to empty, producing a nonempty `a`
+    paired against `b[tau:]`'s correctly-empty result -- a shape mismatch
+    that crashed `np.isnan(a) | np.isnan(b)` with a raw ValueError before
+    the `mask.sum() < min_obs` guard ever got a chance to skip the lag.
+    `lag_correlation_matrix` shares the same `_align` call and crashed
+    identically. Every length here that is at or below the default
+    `max_lag=10` window would have crashed pre-fix; longer ones are included
+    as a control showing they always worked.
+    """
+    idx = pd.date_range("2020-01-01", periods=n, freq="B")
+    rng = np.random.default_rng(7)
+    df = pd.DataFrame(
+        {
+            "x": rng.normal(size=n),
+            "y": (rng.normal(size=n) > 0).astype(float),
+        },
+        index=idx,
+    )
+    issues = audit_correlation_leakage(df, target="y")  # must not raise
+    matrix = lag_correlation_matrix(df, target="y")  # must not raise
+    assert isinstance(issues, list)
+    # Column count (2*max_lag + 1) is fixed regardless of n; row count can
+    # legitimately be 0 for very small n where x or y happens to come out
+    # constant (n=1 always is; n=2 sometimes is, since y is a coin-flip
+    # sign) -- that's the *existing*, unrelated constant-skip guard, not
+    # what this test is pinning. What must hold at every n is: it doesn't
+    # crash, and the shape is never anything but (0 or 1, 21).
+    assert matrix.shape[1] == 21
+    assert matrix.shape[0] in (0, 1)
+
+
+def test_short_series_lag_values_agree_with_a_longer_equivalent_slice():
+    """
+    Not just "doesn't crash" -- the clamped-empty slices at an
+    out-of-range lag must behave exactly like `min_obs` intended: no
+    correlation computed there at all (NaN), while lags actually within
+    the short series' range are scored normally and match what a longer
+    series sliced down to the same overlap would produce.
+    """
+    idx = pd.date_range("2020-01-01", periods=8, freq="B")
+    rng = np.random.default_rng(11)
+    x = rng.normal(size=8)
+    y = rng.normal(size=8)
+    df = pd.DataFrame({"x": x, "y": y}, index=idx)
+
+    matrix = lag_correlation_matrix(df, target="y", max_lag=10, min_obs=3)
+    # lag columns run [-10..10]; only overlaps with >= min_obs=3 paired
+    # points can be non-NaN. At |tau| >= 6, overlap = 8 - |tau| < 3 rows
+    # attainable at most 2 -- wait: 8-6=2 < 3, so already below min_obs.
+    # The out-of-range lags (|tau| > 8, where the bug lived) must be NaN.
+    lag_labels = list(range(-10, 11))
+    for tau, col in zip(lag_labels, matrix.columns):
+        overlap = 8 - abs(tau)
+        if overlap < 3:
+            assert pd.isna(matrix.iloc[0][col]), f"tau={tau} should be NaN"

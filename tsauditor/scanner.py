@@ -15,6 +15,36 @@ from tsauditor.report.summary import GuardReport, Issue, CRITICAL, WARNING
 from tsauditor.utils.validation import validate_dataframe, infer_frequency
 
 
+def _require_joblib():
+    """
+    Import and return ``joblib.Parallel``/``joblib.delayed``, or raise a
+    clear, actionable ``ImportError`` if joblib isn't installed.
+
+    ``n_jobs`` is a public, documented ``scan()`` parameter, but joblib was
+    only ever listed under the ``dev`` extra in ``pyproject.toml`` -- an
+    extra meant for contributors running the test suite, not something a
+    real caller would think to install. A caller who tried
+    ``scan(df, group_col=..., n_jobs=2)`` without it got a raw
+    ``ModuleNotFoundError: No module named 'joblib'`` pointing at this
+    module's internals, with no indication of what to install or that this
+    is an expected, documented situation rather than a bug. Compare
+    ``tsauditor.report.pdf``'s ``_require_matplotlib``, which has always
+    guarded matplotlib's optional import the same way this now guards
+    joblib's -- this was simply the one optional-dependency import in the
+    codebase that never got the equivalent treatment.
+    """
+    try:
+        from joblib import Parallel, delayed
+
+        return Parallel, delayed
+    except ImportError as exc:  # pragma: no cover - exercised only without joblib
+        raise ImportError(
+            "scan(..., n_jobs=...) with n_jobs != 1 requires joblib, which is "
+            "an optional dependency.\n"
+            "Install it with:  pip install 'tsauditor[parallel]'"
+        ) from exc
+
+
 def scan(
     df: pd.DataFrame,
     target: Optional[str] = None,
@@ -23,7 +53,7 @@ def scan(
     available_at: Optional[dict] = None,
     constraints: Optional[dict] = None,
     group_col: Optional[str] = None,
-    # Anomaly detector tuning — all None/"strict" by default, matching the
+    # Anomaly detector tuning: all None/"strict" by default, matching the
     # underlying audit_point_anomalies / audit_contextual_anomalies defaults
     # exactly, so passing none of these changes nothing for existing callers.
     zscore_threshold: Optional[float] = None,
@@ -31,11 +61,13 @@ def scan(
     spike_threshold: Optional[float] = None,
     spike_window: Optional[int] = None,
     handle_missing: str = "strict",
-    # Fine-grained toggles — all enabled by default
+    # Fine-grained toggles: all enabled by default
     run_profiler: bool = True,
     run_anomaly: bool = True,
     run_leakage: bool = True,
     run_stationarity: bool = True,
+    stationarity_max_lag: Optional[int] = None,
+    n_jobs: int = 1,
 ) -> GuardReport:
     """
     Audit a time-series DataFrame for data quality issues.
@@ -85,7 +117,7 @@ def scan(
         tagged with its entity via ``Issue.group``.
 
         Without it a panel is treated as one interleaved series, which makes the
-        structural, anomaly and rolling checks meaningless — a rolling window
+        structural, anomaly and rolling checks meaningless: a rolling window
         would span several entities at once, and every timestamp would look
         duplicated.
 
@@ -127,6 +159,55 @@ def scan(
         Run the ADF stationarity test (PRF003). Default True. This is the most
         expensive check by far (statsmodels ADF dominates runtime); set False to
         skip it when you only need structural, anomaly and leakage checks.
+    stationarity_max_lag : Optional[int]
+        Passed straight through to ``audit_stationarity``'s own ``max_lag``.
+        Default None: statsmodels' ``autolag="AIC"`` searches every lag up to
+        its own default cap, fitting one OLS regression per candidate lag per
+        numeric column: this is what makes ADF "the most expensive check by
+        far" above. Passing a small int (e.g. 5) sharply cuts the number of
+        fits at a slight cost in test precision, without disabling the check
+        entirely the way ``run_stationarity=False`` does. Was previously only
+        reachable by calling ``audit_stationarity`` directly, bypassing
+        ``scan()``: this parameter closes that gap.
+    n_jobs : int
+        Only consulted when ``group_col`` is given. Number of worker
+        processes to audit entities with, forwarded to ``joblib.Parallel``.
+        Requires the optional ``joblib`` dependency
+        (``pip install 'tsauditor[parallel]'``) whenever a value other than
+        the default is used; raises a clear ``ImportError`` naming that
+        extra if it isn't installed, rather than a bare
+        ``ModuleNotFoundError``.
+
+        Default 1: entities are audited sequentially, one at a time, in this
+        process: unchanged behavior from before this parameter existed.
+        ``-1`` uses every available core; any positive int caps it.
+
+        Each entity already runs the single-series pipeline independently
+        (see ``group_col`` above), so this is a straightforward data-parallel
+        map, not a new execution model: what changes is only how many
+        entities are in flight at once, never which checks run or what they
+        find. Issues are collected back in the same per-entity, sorted-by-key
+        order ``n_jobs=1`` produces, so a report's issue ordering does not
+        depend on how many workers happened to be used to build it.
+
+        Matters most for panels with many small entities (hundreds or
+        thousands of tickers/sensors/stores, each a modest number of rows):
+        per-entity fixed overhead (process/statsmodels/scipy call dispatch)
+        dominates total runtime there, not any single entity's own size, and
+        that overhead parallelizes cleanly since entities share no state.
+        ``joblib.Parallel``'s ``batch_size="auto"`` groups many small
+        entities into each dispatch round automatically, so a large entity
+        count does not by itself force one process-dispatch per entity.
+        Uses ``joblib``'s default ``"loky"`` (process) backend: entities
+        (already-partitioned DataFrame slices) and ``_ScanOptions`` are
+        plain, picklable data, the same property the README's external
+        "audit separate frames in parallel" recipe already relies on.
+
+        A panel with very few entities, or entities large enough that a
+        single ADF/leakage pass on one of them already dominates, gains
+        little or nothing here and pays worker start-up cost for it; the
+        default of 1 leaves that decision to the caller rather than guessing
+        a threshold.
 
     Returns
     -------
@@ -174,6 +255,22 @@ def scan(
         # original (not-yet-indexed) df. Without this, apply_fixes has no
         # way to know a time_col was ever used at all.
         "time_col": time_col,
+        # Recorded for the identical reason: apply_fixes()/fix(),
+        # affected_cells(), and health_score() each need to recompute the
+        # exact same outlier/stuck/spike masks the detectors used, and an
+        # explicit override here always beats a domain-derived preset (see
+        # audit_point_anomalies'/audit_contextual_anomalies' own "is None,
+        # not falsy" precedence). Before this, only `domain` was recorded,
+        # so an explicit zscore_threshold=/stuck_window=/spike_threshold=/
+        # spike_window=/handle_missing= argument to scan() was silently
+        # replaced by the domain-only preset everywhere downstream of the
+        # report -- repairing with the wrong threshold, or scoring health
+        # against a mask that doesn't match what was actually flagged.
+        "zscore_threshold": zscore_threshold,
+        "stuck_window": stuck_window,
+        "spike_threshold": spike_threshold,
+        "spike_window": spike_window,
+        "handle_missing": handle_missing,
     }
 
     report = GuardReport(metadata=metadata)
@@ -192,6 +289,7 @@ def scan(
         run_anomaly=run_anomaly,
         run_leakage=run_leakage,
         run_stationarity=run_stationarity,
+        stationarity_max_lag=stationarity_max_lag,
     )
 
     if group_col is None:
@@ -239,11 +337,33 @@ def scan(
         ):
             _append_issue(report, issue)
 
-    for key, sub in groups:
-        sub = sub.drop(columns=[group_col])
-        for issue in _run_checks(sub, options):
-            issue.group = str(key)
-            _append_issue(report, issue)
+    if n_jobs == 1:
+        # Unchanged from before n_jobs existed: sequential, in-process, no
+        # joblib/pickling involved at all.
+        for key, sub in groups:
+            sub = sub.drop(columns=[group_col])
+            for issue in _run_checks(sub, options):
+                issue.group = str(key)
+                _append_issue(report, issue)
+    else:
+        Parallel, delayed = _require_joblib()
+
+        # batch_size="auto" (joblib's adaptive dispatch, not a fixed number
+        # we picked) is what makes this viable for a panel of many small
+        # entities: it groups several entities into each cross-process
+        # dispatch round, measuring actual task duration as it goes, so
+        # per-task overhead doesn't dominate for the 8-90-row entities this
+        # was built for. Results come back in call order (joblib.Parallel's
+        # documented guarantee, independent of which worker finished first),
+        # so issue ordering is identical to the n_jobs=1 path regardless of
+        # worker count.
+        per_group_issues = Parallel(n_jobs=n_jobs, batch_size="auto")(
+            delayed(_run_group)(key, sub.drop(columns=[group_col]), options)
+            for key, sub in groups
+        )
+        for issues in per_group_issues:
+            for issue in issues:
+                _append_issue(report, issue)
 
     return report
 
@@ -265,11 +385,31 @@ class _ScanOptions:
         "run_anomaly",
         "run_leakage",
         "run_stationarity",
+        "stationarity_max_lag",
     )
 
     def __init__(self, **kwargs):
         for name in self.__slots__:
             setattr(self, name, kwargs[name])
+
+
+def _run_group(key, sub: pd.DataFrame, opts: "_ScanOptions") -> list:
+    """
+    Run the single-series pipeline for one panel entity and return a plain
+    list of tagged Issues, not a generator.
+
+    Module-level (not a closure over `scan()`'s locals) so it can be pickled
+    and sent to a worker process: `n_jobs != 1` dispatches through joblib's
+    default "loky" (process) backend, and a generator cannot cross a process
+    boundary even if the function producing it could be pickled. `key` is
+    already the fully-formed entity id (`group_col` already dropped from
+    `sub` by the caller), matching exactly what the `n_jobs=1` sequential
+    loop does inline.
+    """
+    issues = list(_run_checks(sub, opts))
+    for issue in issues:
+        issue.group = str(key)
+    return issues
 
 
 def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
@@ -278,7 +418,7 @@ def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
     the resulting Issues.
 
     This is the single-series pipeline. ``scan`` calls it once for an ordinary
-    frame, or once per entity for a panel — which is what keeps panel support
+    frame, or once per entity for a panel, which is what keeps panel support
     from leaking into the detectors themselves.
     """
     # ── Profiler ──────────────────────────────────────────────────────────────
@@ -291,12 +431,15 @@ def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
         )
 
         # audit_frequency is run once and its issues routed by severity.
-        # (Previously it was called three times — once per bucket.)
+        # (Previously it was called three times: once per bucket.)
         yield from audit_frequency(df, domain=opts.domain)
 
-        # ADF is the heaviest check; allow opting out.
+        # ADF is the heaviest check; allow opting out, or capping the autolag
+        # search via stationarity_max_lag for a cheaper partial win.
         if opts.run_stationarity:
-            yield from audit_stationarity(df, domain=opts.domain)
+            yield from audit_stationarity(
+                df, domain=opts.domain, max_lag=opts.stationarity_max_lag
+            )
 
         yield from audit_missing(df, domain=opts.domain)
 

@@ -11,8 +11,8 @@ come from different sources, yet be functionally identical.
 
 Detection method (rank-based)
 -----------------------------
-Equivalence to a target is a *determinism* question — "does this feature
-near-perfectly reproduce the target?" — not a linearity question. Linear
+Equivalence to a target is a *determinism* question ("does this feature
+near-perfectly reproduce the target?"), not a linearity question. Linear
 (Pearson) correlation answers the wrong question and, worse, collapses on
 the exact case this module exists for: against a binary 0/1 target the
 Pearson point-biserial correlation has a hard ceiling of sqrt(2/pi) ~ 0.798,
@@ -29,8 +29,8 @@ So we use rank-based metrics, chosen by target type:
 Spearman catches any *monotonic* equivalence (including non-linear ones a
 log or square transform would hide from Pearson) and is robust to outliers.
 AUC scores
-1.0 for a feature that perfectly separates the two classes — exactly the
-sign-derived leakage above — while a legitimate weak predictor sits near
+1.0 for a feature that perfectly separates the two classes (exactly the
+sign-derived leakage above) while a legitimate weak predictor sits near
 0.5. Both metrics live on a comparable [0, 1] scale, so a single 0.95
 "near-equivalence" threshold is meaningful for either target type.
 
@@ -80,9 +80,9 @@ def _score_feature(
     Shared with combination.py's single-feature guard, which used to derive
     "does this column already explain the target alone" from a completely
     different metric (adjusted R^2 of a linear/log OLS fit). The two
-    disagreed hardest on exactly the case LEK001 exists for — a strong
+    disagreed hardest on exactly the case LEK001 exists for: a strong
     monotonic but non-linear relationship (Spearman/AUC near 1.0, R^2 well
-    below 0.95) — which let a column LEK001 already flagged slip past the
+    below 0.95), which let a column LEK001 already flagged slip past the
     guard and get reported a second time inside a LEK005 group, with a
     description claiming "none [of these columns] does [explain the target]
     alone." That claim was true under R^2 and false under this module's own
@@ -143,7 +143,7 @@ def audit_equivalence(
     binary_threshold : float
         AUC-separation threshold for a binary target, applied to
         ``max(AUC, 1 - AUC)``. Default 0.95. Loosen toward 0.90 to tolerate
-        a leak that carries some label noise — still far above any
+        a leak that carries some label noise, still far above any
         legitimate predictor (~0.5-0.65).
     min_obs : int
         Minimum number of pairwise-complete (feature, target) observations
@@ -243,7 +243,7 @@ def audit_equivalence(
                         f"Feature '{col}' near-deterministically reproduces target "
                         f"'{target}' ({evidence['metric']} score={score:.4f} >= "
                         f"{threshold} for {target_type} target). Likely data "
-                        f"leakage — review before modeling."
+                        f"leakage. Review before modeling."
                     ),
                     column=col,
                     evidence=evidence,

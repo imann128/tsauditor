@@ -16,7 +16,7 @@ tsa.fix                   # scan and repair in one call -> (DataFrame, GuardRepo
 tsa.adapters.to_timesfm   # audit, repair, format       -> np.ndarray
 tsa.GuardReport           # the report type
 tsa.Issue                 # a single finding
-tsa.__version__           # "0.5.0"
+tsa.__version__           # "0.6.0"
 ```
 
 The detector functions are not re-exported at the top level. Import them from their modules when you want to run one in isolation:
@@ -58,6 +58,8 @@ tsauditor.scan(
     run_anomaly: bool = True,
     run_leakage: bool = True,
     run_stationarity: bool = True,
+    stationarity_max_lag: Optional[int] = None,
+    n_jobs: int = 1,
 ) -> GuardReport
 ```
 
@@ -81,8 +83,10 @@ tsauditor.scan(
 | `run_anomaly` | `bool` | `True` | Run anomaly checks (ANO). |
 | `run_leakage` | `bool` | `True` | Run leakage checks (LEK). Target-based checks still need `target`; LEK004 runs whenever `available_at` is given. |
 | `run_stationarity` | `bool` | `True` | Run the ADF test (PRF003), **the runtime hot spot**. Set `False` for a much faster sweep. |
+| `stationarity_max_lag` | `int` or `None` | `None` | Passed through to `audit_stationarity`'s own `max_lag`. `None` leaves statsmodels' `autolag="AIC"` to search every candidate lag (one OLS fit each), which is what makes ADF the runtime hot spot above. A small int (e.g. `5`) sharply cuts fit count at a slight cost in test precision, without disabling the check the way `run_stationarity=False` does. |
+| `n_jobs` | `int` | `1` | **Since 0.6.0.** Only consulted when `group_col` is given: parallelizes the per-entity scan loop via `joblib.Parallel`. `1` (default) is fully sequential and needs no extra dependency. Any other value requires `pip install 'tsauditor[parallel]'`; without it, a clear `ImportError` naming the extra is raised, rather than a bare `ModuleNotFoundError`. See [Panel Data](Panel-Data#parallelizing-a-panel-scan-n_jobs). |
 
-`zscore_threshold`, `stuck_window`, `spike_threshold`, `spike_window`, and `handle_missing` all default to values that reproduce the previous, always-domain-derived behaviour exactly, so passing none of them changes nothing for existing callers. Before these were added, tuning an individual anomaly parameter meant bypassing `scan()` and calling `audit_point_anomalies`/`audit_contextual_anomalies` directly.
+`zscore_threshold`, `stuck_window`, `spike_threshold`, `spike_window`, and `handle_missing` all default to values that reproduce the previous, always-domain-derived behaviour exactly, so passing none of them changes nothing for existing callers. Before these were added, tuning an individual anomaly parameter meant bypassing `scan()` and calling `audit_point_anomalies`/`audit_contextual_anomalies` directly. **Since 0.6.0**, these five values are also recorded in `report.metadata` and honored by `apply_fixes()`/`fix()`/`affected_cells()` on the repair side — see [Remediation](Remediation#interaction-with-domain-presets) for a bug this closed (an explicit override used to be silently ignored during repair).
 
 ### Returns
 

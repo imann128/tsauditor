@@ -146,13 +146,13 @@ A value repeats unchanged for more than the stuck window: **5** under `"finance"
 
 A value exceeds the z-score threshold (**5.0** finance, **3.5** sensor, **4.0** default) **or** falls outside the 1.5×IQR fence. Either rule alone is enough.
 
-*Evidence:* `zscore_outlier_count`, `iqr_outlier_count`, `agreement_count`, `esd_outlier_count`, `masking_suspected`, `max_zscore`, `worst_value`, `worst_timestamp`
+*Evidence:* `zscore_outlier_count`, `iqr_outlier_count`, `agreement_count`, `esd_outlier_count`, `masking_suspected`, `esd_recovered_count` (since 0.6.0), `max_zscore`, `worst_value`, `worst_timestamp`
 
 *What to do:* A **non-zero** `agreement_count` (points flagged by both independent rules) is strong evidence of genuine errors.
 
 A **zero** `agreement_count` is ambiguous and must not be read as reassurance. It has two opposite causes: a harmlessly skewed distribution, *or* contamination heavy enough to mask the z-score entirely. At 5% contamination the z-score half of the rule reports zero while the IQR half correctly finds every planted outlier, so both cases look identical in the counts.
 
-**`esd_outlier_count` and `masking_suspected` resolve this.** Generalized ESD recomputes the scale after each removal so masking cannot occur: clean Gaussian data gives `esd=0`, 50 planted outliers give `esd=50`. Computed only for this ambiguous case (`None` otherwise) and it never changes what is flagged. See [Reading a zero agreement_count](Detectors-Anomaly#reading-a-zero-agreement_count).
+**`esd_outlier_count` and `masking_suspected` resolve this.** Generalized ESD recomputes the scale after each removal so masking cannot occur: clean Gaussian data gives `esd=0`, 50 planted outliers give `esd=50`. Computed only for this ambiguous case (`None` otherwise). **Since 0.6.0**, when `masking_suspected` is `True`, ESD's own flagged points are folded into what this issue actually reports as anomalous (`esd_recovered_count` counts how many), and `apply_fixes()`/`fix()` repair them too — before 0.6.0 this evidence was diagnostic only and did not change what was flagged or repaired. See [Reading a zero agreement_count](Detectors-Anomaly#reading-a-zero-agreement_count).
 
 Note also that beyond roughly 30% contamination **both** rules fail and no issue is raised at all; silence from ANO002 is not proof of clean data.
 
@@ -201,15 +201,19 @@ The feature's peak cross-correlation with the target falls at a **positive** lag
 
 **WARNING**, per column. Requires `target=`.
 
-The feature correlates with the target's future by more than the target's own autocorrelation explains:
+The feature correlates with the target's future by more than the target's own autocorrelation explains. **Since 0.6.0**, the comparison happens in Fisher-z space, not on the raw correlations:
 
 ```
-excess(k) = |corr(feature_t, target_{t+k})| − |corr(feature_t, target_t)| × |corr(target_t, target_{t+k})|
+observed(k) = |corr(feature_t, target_{t+k})|
+expected(k) = |corr(feature_t, target_t)| × |corr(target_t, target_{t+k})|
+excess(k)   = arctanh(observed(k)) − arctanh(expected(k))
 ```
+
+(Before 0.6.0, `excess(k)` was the raw difference `observed(k) - expected(k)`, which lost recall as the target's persistence approached 1.0 — see [Detectors: Leakage](Detectors-Leakage#lek003-lookahead-beyond-persistence).)
 
 Flagged when `excess ≥ 0.1` at some lag k in 1..5, and the observed correlation itself reaches 0.1.
 
-*Evidence:* `lag`, `observed_future_corr`, `excess_over_persistence`, `excess_threshold`, `metric`
+*Evidence:* `lag`, `observed_future_corr`, `expected_from_persistence`, `excess_over_persistence` (Fisher-z units), `excess_threshold`, `excess_scale` (`"fisher_z"`), `metric`
 
 *What to do:* This is the signature of a centered or forward-looking rolling window. Verify the feature uses only past data. Read `excess_over_persistence`: above 0.3 is strong evidence, near 0.1 may be estimation noise.
 
@@ -233,7 +237,9 @@ A value sits at a timestamp earlier than when it was actually published, so rows
 
 A **group of two or three** features together reconstructs the target (adjusted R² ≥ 0.95) while **none does alone**.
 
-*Evidence:* `metric`, `form`, `group`, `group_size`, `group_adjusted_r2`, `best_single_adjusted_r2`, `threshold`, `n_obs`
+**Since 0.6.0**, a binary target has a third path: R² alone is capped at ~0.637 for a binary target (the point-biserial ceiling — see LEK001 above), so a group that reconstructs a binary target via a threshold rule is additionally tested by cross-validated AUC separation, validated against its own permutation null. A finding reached this way reports `evidence["form"] = "linear-auc"` and `evidence["metric"] = "cv_auc_separation"` instead of `"adjusted_r2"`.
+
+*Evidence:* `metric` (`"adjusted_r2"` or, since 0.6.0, `"cv_auc_separation"`), `form` (`"linear"`, `"log"`, or `"linear-auc"`), `group`, `group_size`, `group_score`, `group_adjusted_r2`, `best_single_adjusted_r2`, `threshold`, `n_obs`
 
 *What to do:* Check how the target was defined. This almost always means the target is an arithmetic function of those columns: a difference, mean, spread, product or ratio.
 
@@ -319,7 +325,7 @@ Some rows have a null value in `group_col`. `groupby()` drops those rows by defa
 
 A cross-sectional feature (a rank, z-score, decile or sector-neutralised value computed *across entities at one timestamp*) that ranks entities in the order their **future** target values will fall, by more than the target's own cross-sectional persistence explains.
 
-*Evidence:* `metric`, `lag`, `observed_cs_corr`, `expected_from_cs_persistence`, `excess`, `excess_threshold`, `contemporaneous_cs_corr`, `n_entities`, `group_col`
+*Evidence:* `metric`, `lag`, `observed_cs_corr`, `expected_from_cs_persistence`, `excess` (Fisher-z units since 0.6.0, matching LEK003), `excess_threshold`, `excess_scale` (`"fisher_z"`), `contemporaneous_cs_corr`, `n_entities`, `group_col`
 
 *What to do:* Verify the feature is built from the cross-section at each row's own timestamp, not a later one. Read `excess` before acting; like LEK002/LEK003 this is a suspicion flag, and a genuinely predictive factor produces the same signature.
 

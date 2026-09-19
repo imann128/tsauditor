@@ -74,7 +74,6 @@ def contamination_sweep() -> None:
 
     print("Contamination sweep — outliers planted at 10 sigma\n")
     print(f"{'planted':>8} {'tsa z':>7} {'tsa iqr':>8} {'ESD':>6}   verdict")
-    print("-" * 50)
     for n_out in (0, 1, 5, 20, 50, 150, 300):
         v = base.copy()
         v[:n_out] = 10.0
@@ -97,14 +96,12 @@ def clean_data_false_positives() -> None:
 
     print("\n\nClean data (0 true outliers) — false positives\n")
     print(f"{'data':26} {'ESD':>6} {'tsa iqr':>9}")
-    print("-" * 44)
     for name, values in cases.items():
         _, iq = tsauditor_counts(values)
         print(f"{name:26} {generalized_esd(values, 200):>6} {iq:>9}")
 
     print("\n\nDoes STL detrending help? (it does not)\n")
     print(f"{'data':26} {'raw ESD':>8} {'STL-residual ESD':>18}")
-    print("-" * 55)
     for name in ("linear trend", "random walk", "seasonal"):
         series = pd.Series(cases[name], index=IDX)
         resid = STL(series, period=50, robust=True).fit().resid

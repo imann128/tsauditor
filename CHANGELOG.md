@@ -4,6 +4,585 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-09-19
+
+### Added: `audit_combination_leakage` gained a `seed` parameter for the binary-target AUC path
+
+The binary-target extension shipped in 0.6.0 (`_binary_combination_auc`) fits K-fold cross-validated
+splits and draws 200 permutation shuffles, both driven by `numpy.random.default_rng`. Until now that
+generator was seeded unconditionally inside the function, so there was no way for a caller to ask for a
+second, independent draw on a borderline finding, and no way for a test to pin a specific run.
+
+`audit_combination_leakage(..., seed: int = 0)` is new, threaded straight through to
+`_binary_combination_auc`. Default `0` reproduces the exact behavior this function already had, so this
+is purely additive and changes nothing for an existing caller. Only the binary-target path uses it; a
+continuous target is scored by plain OLS, which has no randomness to seed.
+
+`tests/test_combination.py` gained `test_binary_path_is_deterministic_by_default` (same seed must give
+a bit-identical score) and `test_binary_path_seed_param_changes_the_draw_but_not_the_verdict` (a
+different seed can shift the exact score but must agree on flag versus no-flag for an unambiguous leak).
+
+### Added: test coverage for the binary-target AUC path in LEK005 (previously untested)
+
+The binary-target extension to `audit_combination_leakage` (added in 0.6.0) shipped with no dedicated
+tests at all. It is a randomized statistical procedure (K-fold cross-validation plus a permutation
+test), so its correctness is a rate across many trials, not a single true/false assertion, and that gap
+meant a regression in it could only have been caught by chance.
+
+`tests/test_combination.py` now covers, among other cases: detection of a clean two-column and
+three-column binary threshold-rule combination; confirmation that the same construction is invisible to
+plain adjusted R-squared (the whole justification for the path existing, since R-squared alone cannot
+clear the point-biserial ceiling of roughly 0.637 against a binary target); a bounded false-positive
+rate swept across 60 independent trials of unrelated random features against an unrelated binary
+target; that the single-feature guard uses AUC rather than R-squared for a binary target, the same way
+LEK001 does; that `_kfold_fitted`'s degenerate-fold fallback does not crash when training rows are near
+the design's own floor; and that the permutation test's cost (200 refits per candidate) stays off the
+bulk of a scan, mirroring the existing triples-cost test for the continuous path.
+
+### Added: LEK005 (`audit_combination_leakage`) now catches combination leakage into a binary target
+
+Adjusted R² (LEK005's only metric until now) has the same point-biserial
+ceiling against a binary target that LEK001 had to work around for a single
+column (see `leakage/equivalence.py`'s module docstring): it cannot exceed
+roughly 0.637, however perfectly a group's linear combination actually
+determines the class through a threshold rule (`target = 1{a - b > 0}` is
+exactly this shape). A genuine binary combination leak cleared LEK005's
+`gate` (0.30) comfortably but could never reach the default `threshold`
+(0.95) through R² alone, so it was never flagged, regardless of how
+`threshold` was set.
+
+Added a second scoring path, used only when the target is binary and a
+candidate's plain R² clears `gate` without reaching `threshold`: fit the
+group's linear combination with 5-fold cross-validation (`_kfold_fitted`,
+literal per-fold refitting, not the closed-form leave-one-out shortcut:
+that shortcut was tried and rejected because its per-point prediction is
+algebraically linear in that point's own label, which manufactures rank
+separation even against a target the group carries zero information about;
+measured mean \|corr(fitted, y)\| of 0.27 for the LOOCV shortcut against an
+independent random target and random features, versus under 0.05 for
+literal 5-fold refitting on the same data), score the out-of-fold fit's AUC
+separation against the target, and validate that AUC against its own
+permutation null (200 reshuffles, refit and rescore identically each time,
+significant at p < 0.01) rather than a fixed cutoff, since AUC's small-sample
+variance is too large at this module's `min_obs` floor for a fixed
+threshold to be well-calibrated the way it is for adjusted R² (measured
+mean in-sample AUC of 0.63, max 0.77, over 50 trials of two independent
+random features against an independent random binary target at n=30, from
+chance alone).
+
+Verified by direct simulation: a two-feature exact threshold-rule
+reconstruction of a balanced binary target was flagged 30/30 trials by the
+new path (0/30 under R² alone, since adjusted R² tops out near 0.63-0.65
+for that construction and never reaches the default 0.95 threshold); an
+adversarial sweep of 10 mutually independent random features against an
+independent random binary target, all 45 candidate pairs run through the
+real gate/threshold/permutation pipeline across 30 trials, produced 0 false
+flags. A finding reached this way reports `evidence["form"] = "linear-auc"`
+and `evidence["metric"] = "cv_auc_separation"` instead of `"adjusted_r2"`;
+`evidence["group_score"]` is added alongside the existing
+`group_adjusted_r2` key so a `"linear-auc"` finding's actual flagging value
+is available under an unambiguous name (`group_adjusted_r2` still holds the
+same number for continuity, but it is an AUC-separation value, not an R²,
+for this form). No existing evidence key was removed or renamed, and every
+non-binary-target LEK005 finding is scored exactly as before.
+
+### Fixed: ESD's masking-recovered points were reported but never actually flagged or repaired
+
+ANO002's Generalized ESD diagnostic (`0.3.0`) told you when the z-score
+rule looked blind because heavy contamination had inflated the standard
+deviation enough to mask itself (`evidence["masking_suspected"]`), and
+named which points ESD itself considered outliers
+(`evidence["esd_outlier_count"]`), but that information stopped at
+evidence. Flagging stayed z-score OR IQR regardless, so a column under
+confirmed masking could report `masking_suspected: True` and
+`esd_outlier_count: 50` while the issue's own `combined_mask`, and
+therefore `apply_fixes()`/`fix()`'s repair, still touched none of those 50
+points. A reader who trusted `scan()`'s own flagged-point count, rather than
+independently re-reading `esd_outlier_count` and manually deciding what to
+do about it, would have repaired nothing on the exact column the diagnostic
+existed to warn about.
+
+Fixed on both sides. Detection (`anomaly/point.py`): when
+`masking_suspected` is `True`, ESD's own flagged positions are folded into
+`combined_mask`, so they are now part of what the ANO002 issue actually
+reports as anomalous; `evidence["esd_recovered_count"]` counts how many of
+them weren't already caught by z-score or IQR (0 unless masking is
+suspected). Repair (`remediate.py`): `_outlier_mask` (used by
+`outliers="nan"`/`"drop"`) and a new `_esd_masking_repair` (used by
+`outliers="clip"`) apply the identical recovery, via a shared
+`esd_masking_recovery` helper both modules now call, not two independent
+re-derivations of "masking suspected," the same failure mode the
+`anomaly/_common.py` centralization (`0.5.0`) already exists to prevent.
+`_generalized_esd` and the new `esd_masking_recovery`/`EsdRecovery` moved
+from `anomaly/point.py` into `anomaly/_common.py` accordingly (`point.py`
+still imports and re-exports `_generalized_esd` for backward compatibility).
+
+For `outliers="clip"`, ESD-recovered points are set to NaN and left to the
+`missing` imputation step rather than clipped, logged separately as
+`esd_masked_outliers_to_nan` in `last_fixes`. An earlier internal version
+of this repair instead invented a clip band from `_generalized_esd`'s
+removal sequence; adversarial simulation (n=200, contamination fraction in
+{0.15, 0.2, 0.246, 0.3}, magnitude in {4.0, 4.5, 5.0, 5.58, 6.0}, 59 seeds)
+found that band left the point's value completely unchanged in 24 of 951
+masking-suspected cases, i.e. exactly the "flagged but not actually
+repaired" bug this fix exists to close, just moved one step later. NaN has
+no such gap. `_generalized_esd`'s own return signature changed accordingly:
+`(count, positions, bound)`, with `bound` now always `None`, since no
+single `(mean, std, critical)` triple can be guaranteed to exclude every
+point Rosner's sequential test flags; this was verified directly against
+the same adversarial sweep before removing the field's contents rather than
+assumed from the algorithm's description.
+
+`tests/test_anomaly.py` and `tests/test_remediation.py` gain coverage for:
+detection now flagging ESD-recovered points (previously evidence-only);
+`esd_recovered_count`'s value under masking vs. its absence when not
+suspected; `outliers="nan"`/`"drop"`/`"clip"` all actually changing the
+recovered cells' values, not just reporting them as detected; and a
+regression test that a point flagged by both IQR and ESD is clipped, not
+NaN-ed a second time, so the new repair path never overrides a perfectly
+good ordinary clip for a point that never needed the ESD fallback.
+
+**Known limitation, not addressed here.** If IQR itself finds nothing
+(contamination heavy enough to defeat even Tukey's fence), there is no
+z/IQR mask for the recovery step to extend, and the column is skipped with
+no ANO002 issue at all, however contaminated it actually is. This is a
+harder, separate case from ordinary z-score masking and is left open.
+
+### Fixed: an explicit `zscore_threshold=`/`stuck_window=`/`spike_threshold=`/`spike_window=`/`handle_missing=` override silently never reached repair
+
+`scan(df, domain="finance", zscore_threshold=6.0)` used your explicit `6.0`
+for detection, but `apply_fixes()`, `affected_cells()`, and therefore
+`health_score()` had no way to know an override had been passed at all:
+none of these five settings were ever recorded in `report.metadata`, so
+repair always fell back to the `domain` preset (`5.0` for `"finance"`)
+regardless of what `scan()` actually used. Repair could therefore run
+against a materially different mask than the one that produced the
+report's own issues, or, for `spike_threshold`/`spike_window` together
+with `handle_missing="interpolate"`, miss a spike detection's own gap-
+bridging behavior entirely, since `apply_fixes`'s spike-repair pass used to
+always `dropna()` the raw series rather than mirroring
+`audit_contextual_anomalies`'s own `handle_missing`-aware bridging.
+
+Fixed by recording all five in `report.metadata` from `scan()` regardless
+of entry point, and adding `remediate._resolve_detector_settings(report)`,
+which `apply_fixes`/`affected_cells` now call: an explicit (non-`None`)
+value in `report.metadata` wins, a genuinely unset entry falls back to the
+domain preset: the same "`None` means unset, not falsy" precedence the
+detectors themselves already use internally, applied consistently to the
+repair side for the first time. A report built from an older or
+hand-constructed `metadata` dict without these keys degrades gracefully to
+the previous domain-only behavior via `.get(..., None)`, not a `KeyError`.
+
+`fix()` gains matching `zscore_threshold=`, `stuck_window=`,
+`spike_threshold=`, `spike_window=`, and `handle_missing=` keyword
+arguments, forwarded to its internal `scan()` call. Before this, tuning
+detection for a one-shot `fix()` call meant calling `scan()` and
+`apply_fixes()` separately, since `fix()` had no way to pass these through
+at all. `apply_fixes()` itself needs no new argument for them: like
+`group_col`, it reads them back off `report.metadata`.
+
+`tests/test_fix.py` and `tests/test_health.py` gain coverage asserting an
+explicit override is honored by `apply_fixes`/`affected_cells`/
+`health_score`, not just by `scan()`'s own detectors, and that the
+`handle_missing="interpolate"` spike-repair bridging now matches detection
+exactly.
+
+### Fixed: PNL002 (cross-sectional lookahead) had the identical persistence-collapse bug as LEK003
+
+Found while double-checking LEK003's Fisher-z fix (below) for similar constructions
+elsewhere in the codebase. `audit_cross_sectional_leakage`'s `expected(k) = |contemporaneous|
+* |cs_persistence(k)|` / `excess(k) = |observed(k)| - expected(k)` is the cross-sectional
+analogue of LEK003's formula, and shares its structural flaw: correlation is bounded in
+[-1, 1] and compresses near the endpoints, so once a panel's cross-sectional ranking is
+highly persistent (a slow-moving characteristic, sector, size tier, factor loading, not
+just a literal random walk), both a legitimate and a leaky feature's `observed(k)` sit near
+the same ceiling as `expected(k)`, and the raw subtraction between them loses almost all
+resolving power.
+
+Verified independently by direct simulation, not assumed from the LEK003 parallel: a panel
+whose entities' underlying levels each follow their own AR(1) path (so cross-sectional
+persistence decays with lag, the cross-sectional counterpart of LEK003's own φ sweep) shows
+the identical curve: an obvious one-step cross-sectional leak caught 100% of the time
+through φ=0.9, then undetected from φ=0.95 through a cross-sectional near-random-walk
+(φ=1.0). A first simulation attempt used a static, non-decaying fixed-effect design instead
+of an AR(1)-driven one; that construction produced false positives on an *honest* trailing
+feature at moderate φ, traced to a separate cause (the multiplicative `expected(k)` bound
+only holds under a decaying persistence structure, and a flat, non-decaying one isn't a fair
+analogue of LEK003's φ sweep) and discarded before drawing any conclusion from it, rather
+than left as an unexplained result.
+
+**Fixed** the same way as LEK003: `excess(k) = arctanh(|observed(k)|) - arctanh(expected(k))`,
+Fisher-z transforms instead of raw correlations. `excess_threshold`'s default (0.15) needed
+no change: arctanh is close to the identity at the small-to-moderate correlations this
+module's own pre-existing tests exercise, and all 24 of them still pass unchanged. Swept
+again after the fix: 100% detection at every φ tested including φ=1.0 (previously 0%), no
+measured increase in false positives on an honest trailing feature at the same persistence
+level. `tests/test_panel.py` adds `test_pnl002_catches_cross_sectional_leak_across_persistence_levels`
+(parametrized φ = 0.7/0.9/0.95/0.99/1.0, confirmed to fail pre-fix, since the leak went
+undetected from φ=0.95 on, with this exact generator and seed) and
+`test_pnl002_honest_trailing_feature_not_flagged_near_random_walk`. `Issue.evidence` for
+PNL002 gained `excess_scale: "fisher_z"`, documenting the units `excess` and
+`excess_threshold` are now both in; no existing evidence key was removed or renamed.
+
+### Fixed: `n_jobs` raised a bare `ModuleNotFoundError` instead of naming the extra to install
+
+`scan(df, group_col=..., n_jobs=2)` did `from joblib import Parallel, delayed` with no
+guard, so a caller without joblib installed got a raw `ModuleNotFoundError: No module named
+'joblib'` pointing at `scanner.py`'s internals, with no indication this is an expected, optional
+dependency, or what to install. `joblib` was also never given its own extra: it was listed
+only under `dev`, meant for contributors running the test suite, not something a real
+caller adding `n_jobs=` to their own code would think to reach for. Compare
+`tsauditor.report.pdf`'s `_require_matplotlib`, which has always guarded matplotlib's
+identical optional-import situation with a clear message: this was the one optional
+dependency that never got the equivalent treatment.
+
+Fixed by adding `scanner._require_joblib()`, mirroring `_require_matplotlib` exactly, and a
+new `parallel` extra (`pip install 'tsauditor[parallel]'`) in `pyproject.toml`; `dev`
+already depended on `joblib` directly and is unchanged.
+`test_n_jobs_without_joblib_raises_actionable_import_error` in `tests/test_panel.py` pins
+the message, simulating joblib's absence with `sys.modules["joblib"] = None` (the standard
+technique for forcing `import joblib` to raise without actually uninstalling it from the
+test environment) rather than leaving this path untested, which it previously was.
+
+### Added: `n_jobs` parallelizes panel scans internally
+
+[#61](https://github.com/imann128/tsauditor/issues/61): `scan(df,
+group_col=...)` audited every entity sequentially, one at a time, in this
+process, even though the identical per-entity workload already parallelizes
+cleanly through the README's external joblib recipe. A caller with a real
+long-format panel (many entities in one frame, not separate frames per
+entity) had no equivalent lever short of manually re-partitioning back into
+separate DataFrames first, defeating the point of `group_col` in the first
+place. Reported concretely: a 164k-row, 3,617-entity panel (8-90 rows per
+entity) took roughly 12 minutes wall-clock.
+
+`scan()` now accepts `n_jobs` (default `1`, unchanged sequential behavior).
+When `group_col` is set and `n_jobs != 1`, entities are audited through
+`joblib.Parallel(n_jobs=n_jobs, batch_size="auto")` instead of a plain
+Python loop. `joblib`'s adaptive batching is what actually addresses the
+issue's own stated concern about per-task dispatch overhead dominating for
+many small entities, rather than picking one process per entity
+unconditionally. Issues are collected back in the same per-entity,
+sorted-by-key order the sequential path produces regardless of worker
+count or completion order, so `n_jobs` changes nothing about a report's
+content or ordering. Verified directly:
+`test_n_jobs_matches_sequential_result` in `tests/test_panel.py` asserts
+structural equality (`Issue` is a plain dataclass) between an `n_jobs=1`
+and an `n_jobs=2` scan of the same panel, and
+`test_n_jobs_dispatches_through_joblib_parallel` proves parallel dispatch
+actually happens (a spy on `joblib.Parallel`) rather than `n_jobs` being
+silently accepted and ignored, which output equality alone can't
+distinguish.
+
+Measured on a synthetic panel matching the issue's shape (3,617 entities,
+8-90 rows each), on a 2-core sandbox, with `stationarity_max_lag` left
+unset (full ADF autolag search, the worst case) but the ESD-vectorization
+fix below already baked in unconditionally: sequential (`n_jobs=1`)
+extrapolates to ~274s from a 300-entity subsample, already well under the
+reported ~720s; `n_jobs=2` extrapolates to ~161s, a 1.71x speedup limited
+by this sandbox's 2 cores. A machine with more cores available should see
+correspondingly more, and `stationarity_max_lag` stacks with `n_jobs` for a
+further cut on top of either alone.
+
+### Fixed: LEK002 crashed outright on any series at or below `max_lag` in length
+
+**Found while building the `n_jobs` benchmark above, on a synthetic panel
+deliberately shaped like the real one from
+[#61](https://github.com/imann128/tsauditor/issues/61) (entities as short
+as 8 rows).** `audit_correlation_leakage`/`lag_correlation_matrix` (LEK002)
+raised a raw `ValueError: operands could not be broadcast together with
+shapes (0,) (N,)` for any series no longer than `max_lag` (default 10), a
+routine size for a panel entity, not an edge case: this package's own
+default panel shape guidance ("500 stocks, 200 sensors, 50 stores") and
+`min_obs=30`'s own default both implicitly assume entities well over 10
+rows, but nothing enforced that, and `scan(group_col=...)` runs the leakage
+suite on every entity regardless of length.
+
+Root cause: `_align(a, b, tau)` slices two arrays so element *i* pairs
+`a_t` with `b_{t+tau}`. For `tau >= 0` it computed `a[: n - tau]`; once
+`tau > n`, `n - tau` goes negative, and Python's *stop*-slice does not
+clamp a negative stop to zero the way a *start*-slice does: it wraps and
+reads from the end instead, returning `abs(n - tau)` elements instead of
+the empty array the code needed. Paired against `b[tau:]`, which already
+(correctly) came back empty, the two arrays landed at different lengths,
+and `np.isnan(a) | np.isnan(b)` raised before the existing `mask.sum() <
+min_obs` guard (written for exactly this case) ever got a chance to skip
+the lag. The mirror-image bug existed on the negative-`tau` branch's
+`b[: n - s]`.
+
+Fixed by clamping both stop-slice bounds to zero explicitly
+(`max(n - tau, 0)` / `max(n - s, 0)`), so every out-of-range lag now
+produces two genuinely empty, shape-matched arrays and falls through to the
+`min_obs` skip as originally intended, instead of crashing before reaching
+it. `tests/test_correlation.py` adds
+`test_series_shorter_than_max_lag_does_not_crash` (parametrized n = 1, 2,
+5, 9, 10, 11, 15, spanning the boundary in both directions) and
+`test_short_series_lag_values_agree_with_a_longer_equivalent_slice`
+(confirms the clamped-empty lags are cleanly `NaN`, not merely
+non-crashing). Verified to fail with the exact pre-fix `ValueError` when
+the clamp is reverted, then pass again restored: this bug had zero prior
+test coverage anywhere in the suite, since every existing LEK002 test used
+series comfortably longer than the default `max_lag`.
+
+### Fixed: three bugs found in a dedicated correctness sweep, all reproduced before fixing
+
+**1. Detector-tuning overrides never reached `apply_fixes`/`health_score`/`to_json`/`to_pdf`, silently
+falling back to the domain-only preset (most severe of the three).** `scan()` accepts
+`zscore_threshold=`/`stuck_window=`/`spike_threshold=`/`spike_window=`/`handle_missing=` and correctly
+used them for *detection*, but never recorded them in `report.metadata`; only `domain` was kept. Every
+downstream re-derivation of "what counts as anomalous" (`apply_fixes`'s internal repair masks,
+`affected_cells()`, `GuardReport.health_score()`'s and `to_json()`'s/`to_pdf()`'s internal re-scan calls)
+re-derived its threshold from `domain` alone, silently discarding any explicit override the original
+`scan()` call had used. A caller who passed `scan(df, stuck_window=2)` because the domain-preset window
+(5) missed a real stuck run got a report that correctly flagged it, and a repair, and a health score,
+and a JSON/PDF export, that all quietly went back to window 5 and left it unrepaired or unscored.
+Detection and repair disagreeing about the same input is exactly the "drift" class of bug this
+codebase's own module docstrings and past CHANGELOG entries warn about; this was a new instance of it.
+
+Fixed by recording all five tuning parameters in `metadata` alongside `domain`, and adding a single
+`_resolve_detector_settings(report)` helper in `remediate.py` (explicit override wins, `None` still falls
+through to the domain preset, the same "is None, not falsy" precedence the detectors themselves use) that
+`apply_fixes`, `affected_cells`, `health_score()`, `to_json()`, and `export_pdf()` all now call instead of
+each re-deriving thresholds independently. `fix()` also gained the same five parameters so a one-shot
+`tsa.fix(df, stuck_window=2, ...)` call can set them without a separate `scan()`.
+`tests/test_fix.py` adds `test_stuck_window_override_is_forwarded_to_apply_fixes` (a
+`stuck_window=2`-only run flags a 3-point run that the domain-default window of 5 would have missed
+entirely, and proves `apply_fixes` actually repairs it) and
+`test_zscore_threshold_override_is_forwarded_to_health_score` (a strict `zscore_threshold=2.0` override
+catches more z-score outliers than the default preset, and `health_score()`'s re-scan reflects the same
+stricter picture). Both verified to fail with the exact pre-fix behavior when the metadata forwarding is
+reverted.
+
+**2. PNL001 (ragged panel) coverage was inflated by rows with no entity id.** `audit_panel_structure`
+computed `n_all` (the panel's total distinct timestamp count, used as the baseline every entity's coverage
+is compared against) from the raw, unfiltered `df.index`, including rows whose `group_col` value is null.
+A null-entity row belongs to no entity and is never scanned per-entity (PNL004 documents this exclusion
+explicitly), so a timestamp that exists *only* on such a row is not a timestamp any real entity could ever
+have coverage for. Left unfiltered, those timestamps inflated `n_all`, and therefore every real entity's
+reported shortfall: a panel where every real entity has complete, identical coverage of each other could
+be reported as fully ragged (`n_complete_groups=0`) purely because null-entity rows existed at timestamps
+outside every real entity's own range, with none of those entities' actual data having changed at all.
+
+Fixed by restricting `all_timestamps` to the same non-null rows PNL004 already computes
+(`df.loc[~null_mask].index.unique()`), not the raw frame. `tests/test_panel.py` adds
+`test_pnl001_ignores_null_entity_timestamps_when_computing_coverage`: a genuinely complete entity (AAA)
+alongside a genuinely short one (BBB) plus null-entity rows outside AAA's range. Verified AAA still
+reports complete (`n_complete_groups == 1`) and `n_timestamps` still excludes the 10 null-entity
+timestamps, and verified to fail (`n_timestamps` inflates to 110, `n_complete_groups` drops to 0) when the
+filter is reverted.
+
+**3. LEK004's tz-mismatch guard rejected two different-but-comparable timezones, not just genuine
+aware/naive mismatches.** `_availability`'s explicit tz-mismatch check (added to turn a confusing raw
+pandas `TypeError` into a clear message) compared `index.tz != avail.dt.tz` directly: two tzinfo objects.
+That also raised for, e.g., a UTC index against a `US/Eastern` availability Series, even though pandas
+compares those perfectly well by converting to a common instant; only an aware-vs-naive mismatch is
+actually unresolvable. The guard was rejecting valid, comparable data as if it were the error it exists to
+catch.
+
+Fixed by comparing awareness (`index.tz is not None`) rather than tzinfo identity: the check now fires
+only when one side is aware and the other naive. `tests/test_asof.py` adds
+`test_different_but_both_aware_timezones_do_not_raise` (UTC index vs. `US/Eastern` availability, published
+before use in both, must not raise) and `test_aware_vs_naive_still_raises` (the genuine mismatch the
+guard exists for must still be caught). Verified the first fails with the original `ValueError` when the
+comparison is reverted to direct tzinfo equality.
+
+### Added
+- Lead/lag cross-correlation heatmap page in `GuardReport.to_pdf()`: renders the
+  full feature x lag Spearman grid that LEK002 searches, so a reader can see
+  *why* a feature was (or nearly was) flagged instead of only its reported
+  peak lag. Built on a new public
+  `tsauditor.leakage.correlation.lag_correlation_matrix(df, target, max_lag=,
+  min_obs=)`; `audit_correlation_leakage` was refactored to consume the same
+  underlying `_lag_correlation_core` so the heatmap and the detector cannot
+  silently disagree about the same numbers. Verified directly in
+  `tests/test_correlation.py` (`test_matrix_peak_matches_flagged_issue` and
+  friends compare the two against each other, not against separately
+  recomputed expected values). Truncated to `heatmap_top_n` features (default
+  30, ranked by peak |correlation|) with the truncation stated on the page;
+  blank cells (below `min_obs`, or a constant subset) render as light grey,
+  not a misleading zero. Opt out with `to_pdf(...,
+  include_correlation_heatmap=False)`.
+
+  Not yet supported for panel scans (`scan(..., group_col=...)`): per-entity
+  vs. pooled aggregation for a panel heatmap is a real design decision that
+  hasn't been made, so the PDF prints a one-line explanatory note on the
+  Findings page instead of guessing with a pooled-across-entities heatmap.
+
+  This is the one chart in an otherwise black-and-white, no-colour-coding
+  report. `tsauditor/report/pdf.py`'s module docstring explains why this
+  page specifically earns the exception.
+
+### Performance: two concrete bottlenecks found by profiling a real-world-shaped scan
+
+Prompted by a user report of a 12-minute `scan()` on a 3,279-row, 27-column
+dataframe, far slower than a dataframe that size should take. Profiled with
+`cProfile`/`pstats` on a synthetic dataframe matching that shape (25 numeric
+feature columns plus a binary target, deliberately noisy so every check has
+real work to do) before changing anything, rather than guessing at what was
+slow.
+
+- **`_generalized_esd` (the Rosner ESD diagnostic behind ANO002's
+  `masking_suspected` field) called `scipy.stats.t.ppf` as a scalar, once per
+  removal step, up to `0.4 * n` times per ambiguous column.** Every one of
+  those `criticals[i]` values is a pure function of `n`, the step index, and
+  `alpha`, and it never depends on the actual data, so there was no reason to
+  compute it inside the per-column, per-step loop at all. On the benchmark
+  dataframe this scalar `ppf` loop alone accounted for roughly two-thirds of
+  `audit_point_anomalies`'s total time (~6.9s of a 12.1s scan). Replaced with
+  one vectorized call that computes the full `criticals` array up front,
+  before the (inherently sequential; see the function's own docstring for
+  why) removal loop starts. Verified bit-identical to the original elementwise
+  loop across n = 50 / 500 / 3,279 / 10,000. The sequential removal loop
+  itself (recomputing mean/std after each point is dropped, which is the
+  actual point of Rosner's test) is unchanged.
+
+  Measured on the benchmark dataframe: `audit_point_anomalies` dropped from
+  ~6.9s to well under 0.1s for this piece; the full `scan()` went from ~12.1s
+  to ~5s.
+
+- **`scan()` never exposed `audit_stationarity`'s own `max_lag` parameter.**
+  The ADF autolag search (`statsmodels.tsa.stattools.adfuller(...,
+  autolag="AIC")`) is `scan()`'s single most expensive check by construction:
+  it fits a separate OLS regression for every candidate lag it tries, and
+  the default lag ceiling grows with the sample size. `audit_stationarity`
+  itself already accepts `max_lag` to cap that search, but `scan()` had no
+  parameter forwarding it, so the only way to use it was to bypass `scan()`
+  entirely and call `audit_stationarity` directly, an existing lever every
+  `scan()` caller was locked out of. Added `stationarity_max_lag` to
+  `scan()`'s signature, forwarded through `_ScanOptions` to the
+  `audit_stationarity` call in `_run_checks`. Default is `None` (unchanged
+  behavior: an uncapped autolag search), so this is purely additive.
+  `test_scan_forwards_stationarity_max_lag` in `tests/test_scaffold.py` pins
+  the forwarding with a spy on `audit_stationarity`, verified to fail
+  (`assert [None] == [4]`) with the forwarding line reverted.
+
+  Measured on the benchmark dataframe with `stationarity_max_lag=4`: ~5s
+  combined with the ESD fix above down to ~2.4s, roughly a 5x improvement
+  over the original 12.1s.
+
+  **Not yet resolved: neither fix explains a 12-minute real-world runtime on
+  data this size.** ~2.4-5s on a synthetic dataframe of the same shape is
+  nowhere near 720s. Two differences between the synthetic benchmark and real
+  data could plausibly account for the gap and haven't been ruled out: (1) a
+  slower BLAS backend on the affected machine (the reference LAPACK build vs.
+  an optimized OpenBLAS/MKL build changes SVD-heavy OLS fits, used by both
+  `adfuller`'s autolag search and `combination.py`'s LEK005, by a large,
+  environment-dependent constant factor invisible to this profiling run);
+  (2) real data typically has a higher outlier/contamination density than
+  clean synthetic noise, and `_generalized_esd` is still `O(k*n)` even after
+  vectorizing the `ppf` calls, so it scales with however many ambiguous
+  columns and removal steps the real data actually triggers. This needs
+  profiling against the real dataframe, not further guessing against a
+  synthetic one, before deciding whether actual parallelism
+  (multiprocessing/threading across columns or entities) is warranted on top
+  of these fixes.
+
+### Fixed: five bugs found in a dedicated correctness sweep, all reproduced before fixing
+
+- **PNL002 (`audit_cross_sectional_leakage`) folded null-entity rows into a
+  phantom `"nan"` entity.** On pandas < 3 (this package's declared support
+  range, `pandas>=1.5,<3`, masked on pandas 3.x, whose new string dtype
+  preserves `NaN` through `.astype(str)` instead of stringifying it),
+  casting the group column to string turned a missing entity id into the
+  literal string `"nan"`, a real, non-null groupby key. Those rows then
+  participated fully in the cross-sectional correlation, contradicting
+  PNL004's own documented guarantee elsewhere in the same file that
+  null-entity rows are "excluded from every panel check... never examined."
+  Verified directly in a pandas-2.x environment: a 24-ticker panel plus 60
+  null-ticker rows produced a phantom 25th pivoted column that shifted every
+  reported PNL002 statistic. Fixed by dropping null-entity rows before the
+  string cast, mirroring what `audit_panel_structure` and `apply_fixes`
+  already do. `test_pnl002_ignores_null_entity_rows` pins it by asserting
+  identical results with and without wildly-out-of-scale null-ticker rows
+  appended. Confirmed to fail pre-fix on pandas 2.x, pass after.
+
+- **LEK003 (`audit_temporal_leakage`) lost almost all detection power on
+  persistent (near-unit-root) targets**, which includes ordinary undifferenced
+  price-level data, this library's own stated finance use case. Swept
+  detection rate of an obviously-leaky centered rolling window across target
+  autocorrelation: 10/10 trials caught at φ=0.7 (what the existing test suite
+  exercises), 9/10 at φ=0.9, then collapse: 1/10 at φ=0.95, 0/10 from φ=0.97
+  through a literal random walk (φ=1.0). This was a structural limit of the
+  `expected(k) = |r0| * |persistence(k)|` formula, not a simple coding
+  mistake: as persistence approaches 1, the persistence-explained ceiling and
+  a genuine leak's observed correlation both approach 1 and become
+  numerically indistinguishable by subtraction: correlation is bounded in
+  [-1, 1] and compresses near the endpoints, so a fixed raw-difference
+  threshold can't resolve real excess dependence once both sides are pinned
+  near the same ceiling.
+
+  **Fixed** by comparing Fisher-z transforms (`arctanh`) instead of raw
+  correlations: `excess(k) = arctanh(|observed(k)|) - arctanh(|expected(k)|)`.
+  `arctanh` is the standard variance-stabilizing transform for a correlation
+  coefficient. It stretches the space back out near ±1 while staying close
+  to the identity for small-to-moderate correlations, so `excess_threshold`'s
+  default (0.1) needed no change: every pre-existing LEK003 test still passes
+  with it unchanged, confirmed by direct comparison (z-space excess values on
+  this module's own existing test fixtures came out within 0.01 of the
+  original raw-difference values).
+
+  A ratio reformulation (`excess(k) = (observed(k) - expected(k)) /
+  (1 - expected(k))`) was tried first and rejected: it also restores recall,
+  but its denominator approaches zero as persistence approaches 1, which
+  amplifies ordinary Spearman sampling noise on *honest* trailing features
+  into false positives: measured 12-30% false-positive rate at φ ≥ 0.95
+  across a 60-trial sweep, against 0% for the Fisher-z transform at matching
+  recall on the same scenarios. The z-transform was chosen because it fixed
+  the collapse without introducing that tradeoff, not merely because it
+  worked first.
+
+  Swept again after the fix, same construction as above: 100% detection at
+  every φ tested, including φ=1.0 (previously 0%). A weaker, heavily-noised
+  leak (as opposed to an obvious centered window) is still only caught
+  13-57% of the time at φ ≥ 0.97 rather than the near-total collapse the old
+  formula produced. Distinguishing a barely-there leak from noise on a
+  near-random-walk target is intrinsically harder, not merely a units
+  problem, so this is a real improvement rather than a full fix of that
+  weak-signal case. `tests/test_temporal.py` adds
+  `test_centered_rolling_caught_across_persistence_levels` (parametrized
+  φ = 0.7/0.9/0.95/0.99/1.0; the φ=1.0 case is confirmed to fail
+  pre-fix, raw excess 0.032, under the 0.1 threshold, for an obvious leak)
+  and `test_honest_trailing_feature_not_flagged_near_random_walk` (pins that
+  the shipped fix doesn't have the ratio alternative's false-positive
+  failure mode). `Issue.evidence` for LEK003 gained
+  `expected_from_persistence` (the raw-scale expected correlation, for
+  transparency) and `excess_scale: "fisher_z"` (documenting the units
+  `excess_over_persistence` and `excess_threshold` are now both in); no
+  existing evidence key was removed or renamed.
+
+- **ANO002's `worst_value`/`worst_timestamp`/`max_zscore` evidence could name
+  a row that was never actually flagged.** All three were computed from
+  `z_scores.abs().argmax()` over the whole column, not restricted to the
+  points `combined_mask` (z-score OR IQR) actually flagged. This surfaces
+  whenever the two rules disagree (`zscore_outlier_count == 0`,
+  `iqr_outlier_count > 0`, the same "ambiguous" branch the ESD masking
+  diagnostic already exists to disambiguate) and Tukey's fence, which can be
+  asymmetric on skewed data, flags a different point than the raw
+  column-wide z-score ranking would. Reproduces on plain Gaussian noise with
+  no injected contamination (deterministic repro: seed=243, n=111); a sweep
+  of 20,000 random trials found 19 such mismatches. A reader investigating
+  "the worst anomaly" in a flagged column would have looked at the wrong
+  timestamp. Fixed by restricting the argmax to `combined_mask`;
+  `test_worst_evidence_points_at_a_flagged_row` and
+  `test_worst_evidence_always_matches_a_flagged_row` pin the invariant.
+
+- **`to_timesfm`'s `min_context` floor was checked before `context_len`
+  truncation**, not against the array actually returned, so a caller-supplied
+  `context_len` smaller than `min_context` silently returned a shorter array
+  than the documented hard minimum ("the adapter raises below it") instead of
+  raising. `test_context_len_smaller_than_min_context_still_raises` pins it.
+
+- **Two stale docstring/comment claims**, both found to be materially wrong
+  rather than just imprecise: `audit_missing`'s docstring claimed it emits
+  PRF002/PRF005/PRF006, but PRF005 (gap clustering) is actually raised by the
+  unrelated `audit_frequency`; `audit_missing` never emits it. And
+  `leakage/_common.py`'s module docstring claimed `equivalence.py` shares its
+  `encode_target` helper, when `equivalence.py` deliberately implements its
+  own separate encoding (its own code comment says so explicitly) because its
+  AUC computation needs strictly `{0.0, 1.0}` labels, a stricter requirement
+  than the Spearman-based detectors that do use the shared helper. Both
+  corrected to describe actual behavior.
+
 ## [0.5.0] - 2026-08-06
 
 Maintenance release. Every entry below is a bug fix, a docstring/wiki correction, or test coverage for existing behavior: no new public API surface beyond `fix(group_col=...)`, which closes a gap every other panel-aware entry point already had.
@@ -12,22 +591,22 @@ Maintenance release. Every entry below is a bug fix, a docstring/wiki correction
 
 - **README's "tests passing" count went stale repeatedly across this release** as tests were added during review (430 → 448 in an earlier release; 493 → 487 → 493 → 499 → 500 across this one, the 487 dip caused by momentarily computing it in an environment missing the optional `polars`/`joblib` dependencies rather than the full `[dev]` set CI actually installs). Now 500, matching a fresh `pytest --collect-only` with `pip install -e ".[dev]"`.
 - **Two wiki version-string examples were still `0.4.0`** (`wiki/API-Reference.md`'s `tsa.__version__` example, `wiki/Installation.md`'s "verifying the install" output) against the actual current `0.5.0`. Same class of drift `to_dict()`'s own [0.4.0] CHANGELOG entry already flagged once before for a prior release's leftover `0.3.0` references.
-- **`wiki/Issue-code-reference.md`'s "Severity levels" summary table said 5 CRITICAL / 11 WARNING**, summing to 18 — the code count from before panel support (PNL001-004) existed. The actual, current split (verified by counting every `severity=` in source, cross-checked against the same page's own complete code table just above, which was already correct) is 6 CRITICAL / 13 WARNING / 2 INFO = 21.
-- **The same page's PNL002 row claimed "No" for "Repaired by `apply_fixes`?".** False: `leaky_columns()` explicitly includes PNL002-tagged columns (by design, per its own docstring), so `apply_fixes(leakage="drop")` does remove them — verified empirically with a constructed panel carrying a genuine cross-sectional lookahead feature flagged only by PNL002, not by any per-entity LEK00x code, confirming the drop path specifically rather than inferring it from reading `leaky_columns()`'s source alone. Added `test_apply_fixes_drops_a_column_flagged_only_by_pnl002` to `tests/test_panel.py` to lock this in.
-- **`infer_frequency`'s "weekly" and "monthly" branches, and its final "irregular" fallback, had never been exercised by any test in the suite** — every existing test used daily or sub-daily data. Verified all three classify correctly by direct call; added `test_infer_frequency_weekly`/`_monthly`/`_irregular` to `tests/test_scaffold.py`.
-- **Three wiki pages (`How-it-works.md`, `Internals.md`, `Remediation.md`) described `remediate.py` as keeping its own hand-duplicated copy of the detector formulas** — "these duplicate the detector modules' values," "a real maintenance hazard," "held together only by `tests/test_fix.py`." This was true once, but not since `tsauditor/anomaly/_common.py` was introduced: `remediate.py` now imports the threshold presets and masking functions directly (`zscore_preset`, `stuck_window_preset`, `spike_threshold_preset`, `zscore_iqr_masks`, `clip_bounds`, `stuck_run_mask`, `spike_bounds`), and `test_detector_and_repair_share_the_same_threshold_and_mask_functions` asserts this by object identity, not just matching output. All three pages rewritten to describe the current, structurally-drift-proof architecture, with the historical incident (the ANO001 single-row-gap bridge that once *did* drift) kept as context for why the change mattered.
-- **`wiki/Internals.md`'s `Anomaly and remediation helpers` section went further: its code snippets and prose described the *old* stuck-run implementation, and directly asserted the opposite of the current, correct behavior** — "a NaN correctly splits a run rather than joining two." The current `stuck_run_mask` deliberately *bridges* a single interior NaN so a lone missing reading inside an otherwise-flat run still counts as one continuous stuck run, not two shorter ones (verified directly: `[1,1,1,NaN,1,1,1]` bridges to one run of length 7; `[1,1,1,NaN,2,2,2]`, a genuine transition, still correctly splits into two runs of 3). The same wrong claim was repeated on `wiki/Detectors-Anomaly.md`, the primary user-facing page explaining ANO001 — the more consequential of the two, since it's what a user reads to understand the detector's actual behavior. Both corrected and re-verified against a fresh `stuck_run_mask` call before editing.
-- **A contradiction within the same paragraph of `wiki/Internals.md`**: one sentence correctly explained that `equivalence.py`'s own target-encoding is a deliberate semantic difference from the shared `encode_target` helper, "not incidental duplication" — then the very next sentence called it "duplicated verbatim... a consolidation opportunity for a future refactor." Rewritten to drop the contradiction and note that `combination.py` uses the same encoding a third time, deliberately, so its single-feature guard agrees with LEK001 about what "binary" means.
+- **`wiki/Issue-code-reference.md`'s "Severity levels" summary table said 5 CRITICAL / 11 WARNING**, summing to 18: the code count from before panel support (PNL001-004) existed. The actual, current split (verified by counting every `severity=` in source, cross-checked against the same page's own complete code table just above, which was already correct) is 6 CRITICAL / 13 WARNING / 2 INFO = 21.
+- **The same page's PNL002 row claimed "No" for "Repaired by `apply_fixes`?".** False: `leaky_columns()` explicitly includes PNL002-tagged columns (by design, per its own docstring), so `apply_fixes(leakage="drop")` does remove them. Verified empirically with a constructed panel carrying a genuine cross-sectional lookahead feature flagged only by PNL002, not by any per-entity LEK00x code, confirming the drop path specifically rather than inferring it from reading `leaky_columns()`'s source alone. Added `test_apply_fixes_drops_a_column_flagged_only_by_pnl002` to `tests/test_panel.py` to lock this in.
+- **`infer_frequency`'s "weekly" and "monthly" branches, and its final "irregular" fallback, had never been exercised by any test in the suite**, and every existing test used daily or sub-daily data. Verified all three classify correctly by direct call; added `test_infer_frequency_weekly`/`_monthly`/`_irregular` to `tests/test_scaffold.py`.
+- **Three wiki pages (`How-it-works.md`, `Internals.md`, `Remediation.md`) described `remediate.py` as keeping its own hand-duplicated copy of the detector formulas**: "these duplicate the detector modules' values," "a real maintenance hazard," "held together only by `tests/test_fix.py`." This was true once, but not since `tsauditor/anomaly/_common.py` was introduced: `remediate.py` now imports the threshold presets and masking functions directly (`zscore_preset`, `stuck_window_preset`, `spike_threshold_preset`, `zscore_iqr_masks`, `clip_bounds`, `stuck_run_mask`, `spike_bounds`), and `test_detector_and_repair_share_the_same_threshold_and_mask_functions` asserts this by object identity, not just matching output. All three pages rewritten to describe the current, structurally-drift-proof architecture, with the historical incident (the ANO001 single-row-gap bridge that once *did* drift) kept as context for why the change mattered.
+- **`wiki/Internals.md`'s `Anomaly and remediation helpers` section went further: its code snippets and prose described the *old* stuck-run implementation, and directly asserted the opposite of the current, correct behavior**: "a NaN correctly splits a run rather than joining two." The current `stuck_run_mask` deliberately *bridges* a single interior NaN so a lone missing reading inside an otherwise-flat run still counts as one continuous stuck run, not two shorter ones (verified directly: `[1,1,1,NaN,1,1,1]` bridges to one run of length 7; `[1,1,1,NaN,2,2,2]`, a genuine transition, still correctly splits into two runs of 3). The same wrong claim was repeated on `wiki/Detectors-Anomaly.md`, the primary user-facing page explaining ANO001, the more consequential of the two, since it's what a user reads to understand the detector's actual behavior. Both corrected and re-verified against a fresh `stuck_run_mask` call before editing.
+- **A contradiction within the same paragraph of `wiki/Internals.md`**: one sentence correctly explained that `equivalence.py`'s own target-encoding is a deliberate semantic difference from the shared `encode_target` helper, "not incidental duplication"; then the very next sentence called it "duplicated verbatim... a consolidation opportunity for a future refactor." Rewritten to drop the contradiction and note that `combination.py` uses the same encoding a third time, deliberately, so its single-feature guard agrees with LEK001 about what "binary" means.
 - **`wiki/Internals.md`'s "Known rough edges" section still listed the (now-fixed) remediate.py duplication as a live limitation.** Removed; a resolved issue documented in the CHANGELOG isn't a "known rough edge" anymore. The section's other three entries were individually re-verified against current source before leaving them in place (`domain=` really is accepted-and-ignored by all four leakage detectors and `audit_stationarity`, confirmed by grepping every function body for an actual use).
 
 ### Fixed: two docstring inaccuracies in scan()
 
-- `run_leakage`'s docstring claimed leakage checks are "silently skipped if target is None." False for LEK004 (as-of leakage): it is target-independent by design and runs whenever `available_at` is supplied, target or not — confirmed with a direct repro (`scan(df, target=None, available_at=...)` still raises LEK004) before correcting the wording to name the exception explicitly.
+- `run_leakage`'s docstring claimed leakage checks are "silently skipped if target is None." False for LEK004 (as-of leakage): it is target-independent by design and runs whenever `available_at` is supplied, target or not. Confirmed with a direct repro (`scan(df, target=None, available_at=...)` still raises LEK004) before correcting the wording to name the exception explicitly.
 - `group_col`'s docstring said "Panel-level structure checks (PNL001, PNL003) also run," omitting PNL004 (null-entity rows), which the same `audit_panel_structure` call always raises alongside the other two. Docstring now lists all three and notes they are not gated by any `run_*` toggle.
 
 ### Fixed: profiler package docstring claimed a KPSS test that does not exist
 
-- `tsauditor/profiler/__init__.py`'s module docstring described `stationarity` as running "ADF/KPSS stationarity tests." `profiler/stationarity.py` only ever implemented ADF (`statsmodels.tsa.stattools.adfuller`); grepping the whole package for `kpss`/`KPSS` turned up this one docstring line and nothing else — no implementation, no import, no code path. Corrected to describe only what the module actually does.
+- `tsauditor/profiler/__init__.py`'s module docstring described `stationarity` as running "ADF/KPSS stationarity tests." `profiler/stationarity.py` only ever implemented ADF (`statsmodels.tsa.stattools.adfuller`); grepping the whole package for `kpss`/`KPSS` turned up this one docstring line and nothing else: no implementation, no import, no code path. Corrected to describe only what the module actually does.
 
 ### Fixed: detectors called directly (not via scan()) silently mis-scored an out-of-order DatetimeIndex
 
@@ -62,7 +641,7 @@ Maintenance release. Every entry below is a bug fix, a docstring/wiki correction
 
 ### Fixed: apply_fixes()/fix() never resolved time_col, so a time_col caller's row order was never sort-checked at all
 
-- **`apply_fixes(report, df)` only defended against an out-of-order *DatetimeIndex* — it had no idea `time_col` existed.** A caller who used `scan(df, time_col="date")` and then `fix(df, time_col="date")` or `report.apply_fixes(df)` handed `apply_fixes` the *original* `df`, which still had `time_col` as a plain column and a meaningless `RangeIndex`, not the `DatetimeIndex` `scan()` resolved internally. Since the DatetimeIndex sort-safety added above only triggers when `df.index` actually *is* a `DatetimeIndex`, it never engaged at all for `time_col` callers: the identical "found the issue, repaired zero cells" failure as an out-of-order `DatetimeIndex`, just reached through `time_col` instead. Confirmed concretely: `scan(df, time_col="date")` correctly found an 8-point stuck run on shuffled rows; `fix()`'s subsequent repair silently changed zero cells.
+- **`apply_fixes(report, df)` only defended against an out-of-order *DatetimeIndex*: it had no idea `time_col` existed.** A caller who used `scan(df, time_col="date")` and then `fix(df, time_col="date")` or `report.apply_fixes(df)` handed `apply_fixes` the *original* `df`, which still had `time_col` as a plain column and a meaningless `RangeIndex`, not the `DatetimeIndex` `scan()` resolved internally. Since the DatetimeIndex sort-safety added above only triggers when `df.index` actually *is* a `DatetimeIndex`, it never engaged at all for `time_col` callers: the identical "found the issue, repaired zero cells" failure as an out-of-order `DatetimeIndex`, just reached through `time_col` instead. Confirmed concretely: `scan(df, time_col="date")` correctly found an 8-point stuck run on shuffled rows; `fix()`'s subsequent repair silently changed zero cells.
 
   Root cause was two-layered: `report.metadata` never recorded which `time_col` was used in the first place, so there was no way for `apply_fixes` to know. `scanner.py` now records `metadata["time_col"]`, and `apply_fixes` resolves it into a working `DatetimeIndex` (mirroring `validate_dataframe`'s own `set_index`) before repairing, then restores the caller's original column layout and row order before returning. Verified this composes correctly with `group_col` too (`time_col` + `group_col` together): the per-entity recursive call in `_apply_fixes_by_group` inherits the already-resolved index and correctly skips re-resolving it a second time.
 

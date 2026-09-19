@@ -23,7 +23,7 @@ def _polars_to_pandas(df, time_col: Optional[str]) -> pd.DataFrame:
     Convert a polars DataFrame to pandas at the scan() boundary.
 
     polars has no index, so a polars input must name its datetime column via
-    ``time_col`` — there is otherwise no way to know which column is time.
+    ``time_col``: there is otherwise no way to know which column is time.
     See https://github.com/imann128/tsauditor/issues/28.
     """
     if time_col is None:
@@ -158,9 +158,9 @@ def ensure_sorted_datetime_index(df: pd.DataFrame, context: str) -> pd.DataFrame
     ``.shift()``, consecutive-run detection, positional lag alignment) must
     call this at its *own* entry point, not just rely on scan()'s
     ``validate_dataframe`` having already sorted upstream. Every
-    ``audit_*``/``detect_*`` function in this package is also public API —
+    ``audit_*``/``detect_*`` function in this package is also public API,
     called directly in this codebase's own test suite (see
-    ``tests/test_adapters.py``, and the leakage/anomaly unit tests) — so
+    ``tests/test_adapters.py``, and the leakage/anomaly unit tests), so
     "the caller already sorted it" is only true on the ``scan()`` path, not
     when a user imports a detector and calls it themselves.
 
@@ -209,7 +209,7 @@ def infer_frequency(index: pd.DatetimeIndex) -> str:
     Infer a human-readable frequency label from a DatetimeIndex.
 
     Returns one of: "daily", "weekly", "monthly", "sub-daily", "irregular".
-    This is intentionally coarse — precise frequency inference is handled
+    This is intentionally coarse: precise frequency inference is handled
     by profiler.frequency.
     """
     if len(index) < 2:

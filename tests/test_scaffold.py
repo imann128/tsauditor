@@ -350,6 +350,46 @@ def test_scan_forwards_anomaly_tuning_params():
     assert len(tuned_report.filter(code="ANO001")) == 1
 
 
+def test_scan_forwards_stationarity_max_lag(monkeypatch):
+    """
+    Regression: audit_stationarity's own max_lag parameter -- documented as
+    "sharply reduces the number of OLS fits" and the practical lever for
+    scan()'s single most expensive check (statsmodels' ADF autolag search) --
+    was never threaded through scan() itself, only reachable by calling
+    audit_stationarity directly and bypassing scan() entirely. Proven via a
+    spy on audit_stationarity rather than by asserting on issues, since a
+    capped lag search doesn't reliably flip PRF003 one way or the other on
+    any particular series -- what must be verified is that the value crosses
+    the scan() -> audit_stationarity boundary at all.
+    """
+    # _run_checks does `from tsauditor.profiler import audit_stationarity`
+    # *inside the function body*, at call time -- so it resolves whatever
+    # name tsauditor.profiler's own namespace currently binds, not
+    # tsauditor.profiler.stationarity's. The spy has to patch that
+    # re-exported name, or scan() would keep calling the real function
+    # underneath it.
+    import tsauditor.profiler as profiler_mod
+
+    calls = []
+    real_fn = profiler_mod.audit_stationarity
+
+    def spy(df, **kwargs):
+        calls.append(kwargs.get("max_lag"))
+        return real_fn(df, **kwargs)
+
+    monkeypatch.setattr(profiler_mod, "audit_stationarity", spy)
+
+    idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    df = pd.DataFrame({"x": range(60)}, index=idx)
+
+    tsa.scan(df, run_leakage=False, run_anomaly=False, stationarity_max_lag=4)
+    assert calls == [4]
+
+    calls.clear()
+    tsa.scan(df, run_leakage=False, run_anomaly=False)
+    assert calls == [None]  # default: unset, matches audit_stationarity's own default
+
+
 def test_scan_forwards_handle_missing_to_ano001_bridging():
     """
     handle_missing is documented on scan() now; confirm it actually reaches

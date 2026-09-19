@@ -636,6 +636,49 @@ def test_pnl002_detects_the_leak_at_every_common_factor_ratio(common_ratio):
     assert issues[0].evidence["lag"] == 1
 
 
+def test_pnl002_ignores_null_entity_rows():
+    """
+    Regression. On pandas < 3 (this package's declared support range,
+    pandas>=1.5,<3 -- masked in some dev/test environments that happen to
+    have pandas 3.x installed, since 3.x's string dtype preserves NaN
+    through .astype(str) instead of stringifying it), a null-entity row used
+    to survive as a phantom entity literally named "nan" once the group
+    column was cast to string, and that phantom entity participated fully in
+    the cross-sectional correlation below -- contradicting PNL004's
+    documented guarantee that null-entity rows are "excluded from every
+    panel check... never examined."
+
+    Proven the version-independent way: append null-ticker rows carrying
+    wildly different values from every real entity (so if they were ever
+    folded into the correlation as a phantom entity, the reported evidence
+    would visibly shift) and assert the results are identical with and
+    without them.
+    """
+    panel = _factor_panel(common_ratio=5)
+
+    rng = np.random.default_rng(99)
+    n_null = 150
+    null_rows = pd.DataFrame(
+        {
+            "ticker": np.nan,
+            "ret": rng.normal(0, 50, n_null),  # far outside every real entity's scale
+            "target": rng.normal(0, 50, n_null),
+            "xs_rank": rng.uniform(0, 1, n_null),
+            "leak": rng.uniform(0, 1, n_null),
+        },
+        index=rng.choice(panel.index, size=n_null, replace=True),
+    )
+    with_nulls = pd.concat([panel, null_rows]).sort_index()
+
+    baseline = audit_cross_sectional_leakage(panel, group_col="ticker", target="target")
+    perturbed = audit_cross_sectional_leakage(
+        with_nulls, group_col="ticker", target="target"
+    )
+
+    assert len(baseline) == len(perturbed) == 1
+    assert baseline[0].evidence == perturbed[0].evidence
+
+
 def test_pnl002_ignores_the_legitimate_cross_sectional_feature():
     """
     `xs_rank` is computed from the cross-section at its own timestamp. It must
@@ -650,6 +693,89 @@ def test_pnl002_ignores_the_legitimate_cross_sectional_feature():
             )
         }
         assert "xs_rank" not in flagged
+
+
+# ── Fisher-z reformulation (persistence-collapse fix, mirroring LEK003) ────────
+#
+# expected(k) = |contemporaneous| * |cs_persistence(k)| and
+# excess(k) = |observed(k)| - expected(k) used to be a raw correlation-point
+# difference, same as LEK003 before its own fix. _factor_panel above never
+# exercises this: its market factor is common to every entity equally, so it
+# never moves cross-sectional RANK order, and idio is drawn fresh i.i.d. each
+# period -- cross-sectional persistence there is ~0 by construction. A panel
+# whose entities have a genuinely persistent relative ranking (a slow-moving
+# characteristic: sector, size tier, factor loading) needs its own generator.
+
+
+def _persistent_rank_panel(
+    phi: float, n_entities: int = 40, n_periods: int = 200, seed: int = 11
+) -> pd.DataFrame:
+    """
+    Each entity's underlying level follows its own AR(1) path (shared phi,
+    independent innovations), so cross-sectional persistence decays with lag
+    roughly like phi^k -- the cross-sectional analogue of LEK003's
+    single-series AR(1) sweep (`_ar1` in test_temporal.py), not the flat,
+    non-decaying fixed-effect design tried and rejected while diagnosing
+    this bug (that design produced false positives on an honest feature for
+    an unrelated reason: the multiplicative expected(k) bound only holds
+    under a *decaying* persistence structure, and a static characteristic
+    that never decays isn't a fair analogue of LEK003's phi sweep).
+
+    ``leak`` mirrors ``_factor_panel``'s: each entity's own next-period
+    cross-sectional rank, pulled back one period -- a genuine one-step
+    cross-sectional lookahead leak. ``honest_trailing`` is the same
+    entity's *previous*-period rank instead: legitimate, uses only the past.
+    """
+    rng = np.random.default_rng(seed)
+    tickers = [f"E{i:02d}" for i in range(n_entities)]
+    dates = pd.date_range("2020-01-01", periods=n_periods, freq="B")
+
+    mu = np.zeros((n_periods, n_entities))
+    mu[0] = rng.normal(0, 3, n_entities)
+    for t in range(1, n_periods):
+        mu[t] = phi * mu[t - 1] + rng.normal(0, 1, n_entities)
+    target = mu + rng.normal(0, 0.3, (n_periods, n_entities))  # small idio noise
+
+    wide = pd.DataFrame(target, index=dates, columns=tickers)
+    long = wide.stack().rename("target").reset_index()
+    long.columns = ["date", "ticker", "target"]
+    long["xs_rank"] = long.groupby("date")["target"].rank(pct=True)
+    long["leak"] = long.groupby("ticker")["xs_rank"].shift(-1)
+    long["honest_trailing"] = long.groupby("ticker")["xs_rank"].shift(1)
+    return long.set_index("date").sort_index().dropna()
+
+
+@pytest.mark.parametrize("phi", [0.7, 0.9, 0.95, 0.99, 1.0])
+def test_pnl002_catches_cross_sectional_leak_across_persistence_levels(phi):
+    """
+    Regression for the Fisher-z reformulation. Confirmed by direct
+    simulation before fixing (this exact generator, seed=9): a raw-
+    difference excess caught the leak 100% of the time through phi=0.9, then
+    collapsed -- undetected from phi=0.95 through a cross-sectional
+    near-random-walk (phi=1.0), the identical failure curve LEK003 had
+    before its own fix. Every level here must still be caught after it.
+    """
+    panel = _persistent_rank_panel(phi, seed=9)
+    issues = audit_cross_sectional_leakage(panel, group_col="ticker", target="target")
+    flagged = {i.column for i in issues}
+    assert "leak" in flagged, (
+        f"an obvious cross-sectional one-step leak went undetected at "
+        f"phi={phi} -- the excess formula is likely back to a raw "
+        f"correlation difference instead of a Fisher-z (arctanh) difference"
+    )
+
+
+def test_pnl002_honest_trailing_feature_not_flagged_near_random_walk():
+    """
+    False-positive guard for the same reformulation, at the persistence
+    level (phi=1.0) most likely to expose one. Mirrors
+    test_honest_trailing_feature_not_flagged_near_random_walk in
+    test_temporal.py.
+    """
+    panel = _persistent_rank_panel(1.0, seed=109)
+    issues = audit_cross_sectional_leakage(panel, group_col="ticker", target="target")
+    flagged = {i.column for i in issues}
+    assert "honest_trailing" not in flagged
 
 
 @pytest.mark.parametrize("true_ic", [0.02, 0.05, 0.08, 0.15])
@@ -1133,3 +1259,181 @@ def test_pnl002_unnamed_datetime_index_matches_the_named_path():
 
     assert [i.evidence for i in issues_named] == [i.evidence for i in issues_unnamed]
     assert [i.column for i in issues_named] == [i.column for i in issues_unnamed]
+
+
+# ── n_jobs (parallel panel scan) ────────────────────────────────────────────
+#
+# github.com/imann128/tsauditor/issues/61: scan(group_col=...) audited every
+# entity sequentially, one at a time, in-process, even though the exact same
+# per-entity workload already parallelizes cleanly through the README's
+# external joblib recipe (separate DataFrames, one scan() call each). A
+# caller with a real long-format panel had no equivalent lever without
+# manually re-partitioning group_col back out into separate frames first,
+# defeating the point of passing group_col at all.
+
+
+def test_n_jobs_default_is_unchanged_sequential_behavior(panel):
+    """n_jobs defaults to 1: no joblib, no process pool, byte-identical to
+    every n_jobs-less scan() call before this parameter existed."""
+    report = tsa.scan(
+        panel, target="direction", group_col="ticker", run_stationarity=False
+    )
+    assert report.metadata["n_groups"] == 5
+    assert report.groups() == TICKERS
+
+
+def test_n_jobs_matches_sequential_result(panel):
+    """
+    The whole point of n_jobs is that it changes *how many entities run at
+    once*, never *what running one entity produces*. n_jobs=2 must yield the
+    exact same Issues, in the exact same order, as n_jobs=1 on identical
+    input -- proven by structural equality (Issue is a plain @dataclass), not
+    just matching counts.
+    """
+    kwargs = dict(
+        target="direction", group_col="ticker", run_stationarity=False
+    )
+    sequential = tsa.scan(panel, n_jobs=1, **kwargs)
+    parallel = tsa.scan(panel, n_jobs=2, **kwargs)
+
+    assert len(sequential.all_issues) > 0  # sanity: this panel does raise issues
+    assert sequential.all_issues == parallel.all_issues
+    assert sequential.metadata["groups"] == parallel.metadata["groups"]
+
+
+def test_n_jobs_ignored_without_group_col():
+    """n_jobs only means anything for a panel scan; passing it without
+    group_col must not raise or change behavior for an ordinary scan."""
+    idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    df = pd.DataFrame({"x": np.random.default_rng(5).normal(size=60)}, index=idx)
+    report = tsa.scan(df, n_jobs=4, run_stationarity=False)
+    assert report.is_panel is False
+
+
+def test_n_jobs_dispatches_through_joblib_parallel(panel, monkeypatch):
+    """
+    Regression: proves n_jobs != 1 actually reaches joblib.Parallel rather
+    than silently falling back to the sequential loop -- output equality
+    alone (test_n_jobs_matches_sequential_result) can't distinguish "really
+    ran in parallel" from "n_jobs was accepted and ignored", since both
+    produce identical Issues on the same input.
+    """
+    import joblib
+    from joblib import Parallel as RealParallel
+
+    calls = []
+
+    class SpyParallel(RealParallel):
+        def __call__(self, iterable):
+            calls.append(True)
+            return super().__call__(iterable)
+
+    # scanner.py does `from joblib import Parallel, delayed` *inside* scan()
+    # itself, at call time -- not at module import time -- so that statement
+    # re-resolves whatever joblib.Parallel currently is on every call.
+    # Patching the joblib module's own attribute is what gets picked up;
+    # there is no persistent `Parallel` name on tsauditor.scanner itself to
+    # patch (the same function-local-import binding rule this codebase's
+    # other n_jobs-adjacent test, test_scan_forwards_stationarity_max_lag,
+    # already had to work around for tsauditor.profiler).
+    monkeypatch.setattr(joblib, "Parallel", SpyParallel)
+
+    tsa.scan(
+        panel,
+        target="direction",
+        group_col="ticker",
+        run_stationarity=False,
+        n_jobs=2,
+    )
+    assert calls == [True]
+
+    calls.clear()
+    tsa.scan(
+        panel,
+        target="direction",
+        group_col="ticker",
+        run_stationarity=False,
+        n_jobs=1,
+    )
+    assert calls == []  # n_jobs=1 never touches joblib.Parallel at all
+
+
+def test_n_jobs_without_joblib_raises_actionable_import_error(panel, monkeypatch):
+    """
+    Regression: n_jobs is a public, documented scan() parameter, but joblib
+    was only ever listed under the `dev` extra -- an extra meant for
+    contributors, not something a real caller installing tsauditor for
+    n_jobs would think to reach for. Before tsauditor.scanner._require_joblib
+    existed, `scan(df, group_col=..., n_jobs=2)` without joblib installed
+    raised a bare `ModuleNotFoundError: No module named 'joblib'` pointing at
+    scanner.py's internals, with no indication this is an expected, optional
+    dependency or what to install -- unlike report.pdf's identical
+    `_require_matplotlib` guard, which has always given a clear message.
+
+    Simulates joblib being absent by setting sys.modules["joblib"] = None,
+    the standard technique for forcing `import joblib` to raise ImportError
+    without actually uninstalling it from this test environment.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "joblib", None)
+
+    with pytest.raises(ImportError, match=r"tsauditor\[parallel\]"):
+        tsa.scan(
+            panel,
+            target="direction",
+            group_col="ticker",
+            run_stationarity=False,
+            n_jobs=2,
+        )
+
+
+def test_pnl001_ignores_null_entity_timestamps_when_computing_coverage():
+    """
+    Regression. all_timestamps used to be computed over the raw,
+    unfiltered df.index -- including rows whose entity id is null. A
+    null-entity row belongs to no entity and is never scanned per-entity
+    (see PNL004), so if such a row sits at a timestamp none of the real
+    entities cover, it used to inflate n_all -- and therefore every real
+    entity's shortfall, since shortfall is n_all minus that entity's own
+    count.
+
+    AAA here is genuinely complete (its 100 timestamps are exactly the
+    non-null timestamps in the panel); BBB is genuinely short (90 of
+    them). Before the fix, 10 null-entity rows sitting at timestamps
+    outside AAA's range inflated n_all from 100 to 110, so AAA's own
+    shortfall went from 0 to 10 -- AAA got reported as incomplete
+    (n_complete_groups == 0) even though nothing about AAA's actual
+    coverage changed. Restricting to non-null rows (this fix) must keep
+    AAA correctly complete.
+    """
+    aaa = _entity("AAA", 100)
+    bbb = _entity("BBB", 90)  # a strict prefix of AAA's dates -> genuinely short
+    df = pd.concat([aaa, bbb]).sort_index()
+
+    # Null-entity rows at timestamps *outside* AAA's own 100-day range --
+    # these must not count toward n_all.
+    extra_dates = pd.date_range("2025-01-01", periods=10, freq="B")
+    null_rows = pd.DataFrame(
+        {
+            "ticker": [None] * 10,
+            "price": np.arange(10.0),
+            "ret": np.zeros(10),
+            "direction": np.zeros(10),
+        },
+        index=extra_dates,
+    )
+    df = pd.concat([df, null_rows]).sort_index()
+
+    issues = audit_panel_structure(df, group_col="ticker")
+    pnl001 = next(i for i in issues if i.code == "PNL001")
+    assert pnl001.evidence["n_timestamps"] == 100, (
+        "the 10 null-entity timestamps outside AAA's range must not be "
+        "counted toward n_all"
+    )
+    assert pnl001.evidence["n_complete_groups"] == 1, (
+        "AAA has complete, unchanged coverage and must still be reported "
+        "complete -- not marked short just because null-entity rows exist "
+        "at timestamps no real entity covers"
+    )
+    assert pnl001.evidence["worst_groups"] == ["BBB"]

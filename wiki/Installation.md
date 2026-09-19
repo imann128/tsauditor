@@ -25,14 +25,15 @@ This installs the core dependencies, which are all `tsauditor` needs for a full 
 An "extra" is an optional group of dependencies you install only if you need that feature. Install one by adding its name in square brackets:
 
 ```bash
-pip install 'tsauditor[pdf]'      # PDF export via report.to_pdf()   -> adds matplotlib
-pip install 'tsauditor[polars]'   # accept polars DataFrames         -> adds polars, pyarrow
+pip install 'tsauditor[pdf]'      # PDF export via report.to_pdf()               -> adds matplotlib
+pip install 'tsauditor[polars]'   # accept polars DataFrames                     -> adds polars, pyarrow
+pip install 'tsauditor[parallel]' # scan(..., group_col=..., n_jobs=...) panel parallelism -> adds joblib
 ```
 
 You can combine them:
 
 ```bash
-pip install 'tsauditor[pdf,polars]'
+pip install 'tsauditor[pdf,polars,parallel]'
 ```
 
 **Quote the whole thing.** The square brackets are special characters in `zsh` and `bash`. Without quotes you will get `zsh: no matches found`.
@@ -46,6 +47,8 @@ pip install 'tsauditor[pdf,polars]'
 ```python
 report = tsa.scan(polars_df, time_col="date")   # time_col is required for polars
 ```
+
+**`[parallel]`**: lets `scan(df, group_col=..., n_jobs=...)` parallelize the per-entity scan loop internally via `joblib`. Without this extra, `n_jobs=1` (the default) works unmodified; passing any other `n_jobs` value raises an actionable `ImportError` naming this extra, rather than a bare `ModuleNotFoundError`. See [Panel Data](Panel-Data) for what `n_jobs` does and when it's worth using.
 
 ### What needs no extra
 
@@ -63,7 +66,7 @@ pip install -e ".[dev]"
 
 The `-e` flag installs in *editable* mode: your local edits take effect immediately, with no reinstall.
 
-The `[dev]` extra adds the full test and lint toolchain: `pytest`, `pytest-cov`, `ruff`, `matplotlib`, `polars`, `pyarrow`, and `joblib`.
+The `[dev]` extra adds the full test and lint toolchain: `pytest`, `pytest-cov`, `ruff`, `matplotlib`, `polars`, `pyarrow`, and `joblib` (the same `joblib` the `[parallel]` extra installs standalone).
 
 Run the test suite:
 
@@ -98,7 +101,7 @@ print(tsa.__version__)
 ```
 
 ```
-0.5.0
+0.6.0
 ```
 
 If that prints a version, you are ready for the [Quickstart](Quickstart).
@@ -112,5 +115,7 @@ If that prints a version, you are ready for the [Quickstart](Quickstart).
 **`ValueError: polars input requires time_col=`**: polars has no index, so `tsauditor` cannot guess which column holds the timestamps. Pass `time_col="your_date_column"`.
 
 **`ImportError: Converting a polars DataFrame requires pyarrow`**: install the polars extra rather than polars alone: `pip install 'tsauditor[polars]'`.
+
+**`ImportError: scan(..., n_jobs=...) ... requires joblib`**: install the parallel extra: `pip install 'tsauditor[parallel]'`. `n_jobs=1` (the default) never needs this.
 
 **`zsh: no matches found: tsauditor[pdf]`**: you forgot the quotes. Use `pip install 'tsauditor[pdf]'`.

@@ -125,7 +125,12 @@ def audit_missing(
 ) -> list:
     """
     Audit individual columns for systematic missing value clusters and high
-    missing rates (PRF002, PRF005, PRF006).
+    missing rates (PRF002, PRF006).
+
+    PRF005 (gap clustering) is a related but separate check, raised by
+    ``audit_frequency`` in ``profiler/frequency.py``: it clusters *large
+    timestamp gaps* between rows, not NaN runs within a column. This
+    function never raises it.
 
     Parameters
     ----------
@@ -167,8 +172,8 @@ def audit_missing(
     """
     issues = []
 
-    # Cluster/consecutive-run detection (PRF002/PRF005) is inherently
-    # positional -- consecutive_run_lengths walks row-to-row. See
+    # Cluster/consecutive-run detection (PRF002) is inherently positional --
+    # consecutive_run_lengths walks row-to-row. See
     # ensure_sorted_datetime_index's docstring.
     df = ensure_sorted_datetime_index(df, "audit_missing")
 

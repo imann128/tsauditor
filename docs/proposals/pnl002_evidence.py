@@ -86,7 +86,6 @@ def main() -> None:
         f"{'LEK002':>7} {'LEK003':>7} | {'xs rho lag+1':>12}"
     )
     print(header)
-    print("-" * len(header))
 
     for ratio in RATIOS:
         panel = build_panel(ratio)

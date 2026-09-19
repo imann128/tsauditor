@@ -326,9 +326,15 @@ Control for persistence explicitly. The correlation a feature can reach with the
 ```
 expected(k) = |corr(feature_t, target_t)| × |corr(target_t, target_{t+k})|
 observed(k) = |corr(feature_t, target_{t+k})|
-
-excess(k)   = observed(k) − expected(k)
 ```
+
+**Since 0.6.0, the comparison is made in Fisher-z space, not on the raw correlations:**
+
+```
+excess(k) = arctanh(observed(k)) − arctanh(expected(k))
+```
+
+Correlation is bounded in [−1, 1] and compresses near the edges: the gap between ρ = 0.97 and ρ = 0.99 is small on the raw scale but represents a much larger difference in how much dependence is actually left over. Fisher's z-transform (`arctanh`, clipped to avoid ±inf at exactly ±1) undoes that compression, so a fixed `excess_threshold` means roughly the same thing whether the target's persistence is 0.5 or 0.99. Before this fix, `excess(k)` was the raw difference `observed(k) − expected(k)`, which loses essentially all power once persistence gets high — see "Limitations" below for the concrete failure and how the fix was verified (a φ-sweep simulation showing recall collapsing to 0% at φ ≥ 0.97 under the raw formula and recovering to 100% under Fisher-z, with no measured increase in false positives).
 
 If `excess(k)` exceeds `excess_threshold` at any lag k in 1..`max_lag`, the feature knows the future better than persistence alone permits. Something other than persistence is carrying that information, most commonly a window that reaches forward.
 
@@ -369,9 +375,11 @@ Concretely: on a synthetic target with a genuine regime change (persistence 0.97
 | Key | Meaning |
 | --- | ------- |
 | `lag` | The lag with the largest excess |
-| `observed_future_corr` | Signed observed correlation at that lag |
-| `excess_over_persistence` | `observed − expected` at that lag |
-| `excess_threshold` | Threshold applied |
+| `observed_future_corr` | Signed observed correlation at that lag (raw scale) |
+| `expected_from_persistence` | The persistence-implied baseline at that lag (raw scale), i.e. `expected(k)` above |
+| `excess_over_persistence` | `arctanh(observed) − arctanh(expected)` at that lag — **in Fisher-z units, not raw correlation units** (since 0.6.0) |
+| `excess_threshold` | Threshold applied, compared against `excess_over_persistence` |
+| `excess_scale` | `"fisher_z"` |
 | `metric` | `"spearman"` |
 
 ### When it does not fire
@@ -404,7 +412,7 @@ for issue in audit_temporal_leakage(df, target="y"):
 ```
 
 ```
-roll_centered {'lag': 1, 'observed_future_corr': 0.4128, 'excess_over_persistence': 0.4094, 'excess_threshold': 0.1, 'metric': 'spearman'}
+roll_centered {'lag': 1, 'observed_future_corr': 0.4128, 'expected_from_persistence': 0.0011, 'excess_over_persistence': 0.4378, 'excess_threshold': 0.1, 'excess_scale': 'fisher_z', 'metric': 'spearman'}
 ```
 
 The centered window is caught; the trailing window is correctly ignored. The two features are otherwise identical: same input, same width, same aggregation. The only difference is `center=True`, and that is the entire bug.
@@ -433,7 +441,7 @@ This is the clearest possible demonstration of why both checks exist. They are n
 
 **It produces false positives, and you should expect them.** In testing, a 11-wide *trailing* window on a white-noise target was flagged with an excess of 0.10, right at the threshold. The persistence baseline is itself an estimate, and estimation noise can push an honest feature over the line. Treat a small excess (near 0.1) as weak evidence and a large one (above 0.3) as strong.
 
-**Highly autocorrelated targets weaken the check.** When the target's persistence is near 1.0, `expected` is nearly as large as `observed` can be, so the excess is squeezed toward zero and real leaks can hide. On the random-walk version of the example above, a 5-wide centered window was **not** flagged: only wider ones were. Financial price levels are exactly this case; consider running the check on returns rather than levels.
+**Fixed in 0.6.0: highly autocorrelated targets used to weaken the check.** Before the Fisher-z fix above, when the target's persistence was near 1.0, the raw `observed − expected` excess got squeezed toward zero even for a genuine lookahead leak, and real leaks could hide. Concretely, on the random-walk version of the worked example, a 5-wide centered window used to go **unflagged** under the old raw-difference formula; only much wider windows crossed the threshold. Under the Fisher-z formula it is now caught at the same width as on a non-persistent target (`excess_over_persistence` of ~0.46 at lag 1 vs. an ~0.10 threshold) — see the worked example above, re-run with a random-walk target instead of white noise. Financial price levels are exactly the persistence regime this fix targets; if you are on `tsauditor` 0.5.x or earlier, running the check on returns rather than levels was the workaround, and upgrading is the fix.
 
 **Only 5 forward lags by default.** A window reaching 10 steps ahead may not be caught at `max_lag=5`.
 
@@ -632,6 +640,10 @@ Neither form alone suffices. An interaction term (`x_i * x_j` as a third predict
 
 The form used is reported in `evidence["form"]`.
 
+**Since 0.6.0: a third path for binary targets.** Adjusted R² against a **binary** target has the same point-biserial ceiling described in the "Why every check uses ranks, not Pearson" section above: it cannot exceed roughly `2/π ≈ 0.637` (R² of the ~0.798 correlation ceiling), no matter how perfectly a group's linear combination actually determines the class via a threshold rule (`target = 1{a - b > 0}` is exactly this shape). Below `threshold` (default 0.95), such a group would never be flagged through R² alone.
+
+When the target is binary and a candidate group's plain R² clears `gate` (0.30) but not `threshold`, `audit_combination_leakage` now additionally fits a 5-fold cross-validated linear combination and scores its out-of-fold AUC separation against the target, then checks that AUC against its own permutation-derived null distribution (200 shuffles, significant at p < 0.01) before flagging. Both the cross-validation and the permutation test are necessary: an in-sample fit scored by AUC is biased well above 0.5 by chance alone at this module's `min_obs` floor, and AUC's small-sample variance is too large for a single fixed cutoff to be well-calibrated the way it is for R². This mirrors the fix LEK001 already applies for a single column (Pearson → AUC); here it applies to a group's fitted combination. `evidence["form"]` reports `"linear-auc"` for a finding reached this way, and `evidence["metric"]` reports `"cv_auc_separation"` instead of `"adjusted_r2"`.
+
 **Why plain OLS, not the rank methods used everywhere else in this module.** The leakage here is arithmetic, and ranking destroys it. On the canonical `target = x1 - x2` case, raw adjusted R² is 1.0000 while the rank-transformed version scores **0.9410**, under the threshold, missing the leak entirely. Rank methods answer "is this monotonic?"; the question here is "do these columns reconstruct the target?"
 
 Adjusted rather than raw R² is used because it penalises extra predictors, keeping the null distribution tight across many candidate groups.
@@ -731,6 +743,8 @@ c = rng.uniform(2, 10, n)
 
 **Additive and multiplicative only.** Between the linear and log forms this covers sums, differences, products and ratios, signed or not. Genuinely non-monotonic constructions (`target = x1² + sin(x2)`) are not found, and would require either a fitted model or a guessed basis expansion; both would cost the library its "no model, no hyperparameters" property.
 
+**The `linear-auc` path (binary targets, since 0.6.0) costs more per candidate.** It only runs on a candidate that already cleared `gate` under plain R² — an independent random pair essentially never does — so it rarely runs on noise, but each run costs 201 refits (1 observed + 200 permutation draws × 5 folds). Verified by direct simulation: a two-feature exact threshold-rule reconstruction of a balanced binary target was flagged 30/30 trials (0/30 under R² alone); an adversarial sweep of 10 mutually independent random features against an independent random binary target, all 45 pairs run through the real gate/threshold/permutation pipeline, produced 0 false flags.
+
 **The log form needs values away from zero.** Signed data is fine (absolute values are used), but a column containing an exact zero falls back to the linear form, so a product involving it may be missed.
 
 **Cost is O(k²) for the pair scan.** About 0.27s for 100 features, 0.07s for 50. With several hundred columns, set `max_features`. Triples add essentially nothing on clean data.
@@ -749,6 +763,6 @@ c = rng.uniform(2, 10, n)
 | LEK005 | **Very high** | An adjusted R² near 1.0 with a low best-single score is an arithmetic identity, not a coincidence. |
 | LEK004 | **High**, conditional on your metadata | The logic is deterministic; only your `available_at` can be wrong. |
 | LEK002 | **Medium** | Read `peak_correlation`. Above 0.5 is alarming; near 0.1 is probably noise. |
-| LEK003 | **Medium** | Read `excess_over_persistence`. Above 0.3 is strong; near 0.1 may be estimation noise. |
+| LEK003 | **Medium** | Read `excess_over_persistence` (Fisher-z units since 0.6.0, not raw correlation). Above 0.3 is strong; near 0.1 may be estimation noise. |
 
 **Remaining gaps.** LEK001–LEK004 are univariate. LEK005 covers groups of two or three by default (raise `max_group_size` for more), additive and multiplicative, signed or not, but not non-monotonic constructions like `x1² + sin(x2)`. For panel data, [PNL002](Panel-Data#pnl002-cross-sectional-lookahead) covers leaks living between entities. `tsauditor` reduces your risk substantially; it does not eliminate it.

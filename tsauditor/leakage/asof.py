@@ -10,17 +10,17 @@ period they refer to. If such a value is aligned to its reference timestamp and
 consumed at that timestamp, every decision made *before* the true release date
 uses information that did not yet exist. That is lookahead leakage.
 
-Unlike LEK002/LEK003, this cannot be detected from the values alone — it depends
+Unlike LEK002/LEK003, this cannot be detected from the values alone: it depends
 entirely on *when each value was published*. So this check is explicit and
 opt-in: the caller supplies the availability information, and the check verifies
 the data respects it. It never guesses release dates.
 
 Two ways to declare availability, per column:
 
-- ``pd.Series`` aligned to ``df.index`` — the publish/availability timestamp of
+- ``pd.Series`` aligned to ``df.index``: the publish/availability timestamp of
   the value sitting at each row. This is the general, correct form and supports
   ragged real release schedules.
-- ``pd.Timedelta`` — a fixed publication lag; availability = row timestamp + lag.
+- ``pd.Timedelta``: a fixed publication lag; availability = row timestamp + lag.
   A positive lag on a column still aligned to reference dates means the *whole*
   column is used early: the classic "forgot to shift the macro series" bug.
 
@@ -56,12 +56,21 @@ def _availability(
                 f"alignment). Index it by df.index."
             )
         # A tz-aware index compared against tz-naive availability (or vice
-        # versa) raises a raw pandas TypeError deep inside `avail > idx` —
+        # versa) raises a raw pandas TypeError deep inside `avail > idx`:
         # a confusing failure for what is usually a mundane mistake (the
         # index was tz_localize'd, the release-date metadata came from
         # somewhere that wasn't). Catch it here with a message that names
         # the actual mismatch instead.
-        if index.tz != avail.dt.tz:
+        #
+        # This must only fire on an aware/naive mismatch. Comparing the two
+        # tzinfo objects directly (`index.tz != avail.dt.tz`) also raised on
+        # two *different but both aware* timezones (e.g. index in UTC,
+        # availability in US/Eastern) even though pandas compares those just
+        # fine by converting to a common instant: that previously rejected
+        # perfectly valid, comparable data as if it were an error.
+        index_aware = index.tz is not None
+        avail_aware = avail.dt.tz is not None
+        if index_aware != avail_aware:
             raise ValueError(
                 f"available_at['{col}'] timezone mismatch: the DataFrame index is "
                 f"{'tz-aware (' + str(index.tz) + ')' if index.tz else 'tz-naive'}, "
@@ -87,7 +96,7 @@ def audit_asof_leakage(
     Detect as-of / point-in-time availability leakage (LEK004).
 
     Flags a column when one or more of its (non-missing) values occupies a row
-    whose timestamp is *earlier* than when that value became available — i.e.
+    whose timestamp is *earlier* than when that value became available, i.e.
     the value would have been used before it existed.
 
     Parameters
@@ -101,7 +110,7 @@ def audit_asof_leakage(
         fixed publication lag (availability = row timestamp + lag). Columns not
         present in this mapping are not checked.
     min_violations : int
-        Minimum number of early rows required to raise the issue. Default 1 —
+        Minimum number of early rows required to raise the issue. Default 1:
         a single confirmed lookahead is real leakage.
 
     Returns
@@ -158,7 +167,7 @@ def audit_asof_leakage(
                     f"Feature '{col}' is used before it was available: {n_viol} row(s) "
                     f"carry a value whose release time is later than the row's own "
                     f"timestamp (max look-ahead {max_days} days, first at {first}). "
-                    f"Rows before each release consume future information — align the "
+                    f"Rows before each release consume future information. Align the "
                     f"column to its release schedule."
                 ),
                 column=col,

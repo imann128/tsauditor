@@ -4,7 +4,7 @@ tsauditor.leakage.combination
 Combination leakage: no single feature reproduces the target, but a *group* of
 features together does.
 
-Every other leakage check in tsauditor is univariate — each feature is scored
+Every other leakage check in tsauditor is univariate: each feature is scored
 against the target on its own. That misses a whole class of real bug::
 
     target = (high + low) / 2
@@ -16,7 +16,7 @@ against the target on its own. That misses a whole class of real bug::
 Here no single input is near-deterministic, so LEK001 stays silent, but the
 group reconstructs the target exactly. The canonical shape is a target defined
 as a *difference*: with ``x1`` and ``x2`` independent and ``target = x1 - x2``,
-each correlates with the target at only ~0.7 — far below LEK001's 0.95 — while
+each correlates with the target at only ~0.7 (far below LEK001's 0.95) while
 the pair explains it perfectly.
 
 Detection method
@@ -24,8 +24,8 @@ Detection method
 For a candidate group of columns, fit ``target ~ 1 + columns`` by ordinary least
 squares and take the **adjusted** R². Two algebraic forms are tried:
 
-- **linear** — catches sums, differences and weighted combinations
-- **log** — the same fit on ``log`` of the target and columns, which catches
+- **linear**: catches sums, differences and weighted combinations
+- **log**: the same fit on ``log`` of the target and columns, which catches
   *products and ratios*, since ``log(a*b) = log a + log b`` and
   ``log(a/b) = log a - log b``. Only attempted when the target and both columns
   are strictly positive.
@@ -51,7 +51,7 @@ which keeps the null distribution tight across many candidate groups.
 
 Triples, without the cost of O(k^3)
 -----------------------------------
-Scanning every triple would be C(k,3) fits — 161,700 for 100 features — and
+Scanning every triple would be C(k,3) fits (161,700 for 100 features) and
 would badly inflate the multiple-comparison problem.
 
 Instead, triples are reached by **residual extension**: if ``target = a+b+c``,
@@ -95,6 +95,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from tsauditor.leakage.equivalence import _auc as _pairwise_auc
 from tsauditor.leakage.equivalence import _score_feature as _equivalence_score
 from tsauditor.report.summary import Issue, CRITICAL
 
@@ -139,10 +140,15 @@ def _score_arrays(y: np.ndarray, X: np.ndarray) -> Tuple[float, str]:
     The log form fits ``log|y| ~ log|X|``. Absolute values rather than raw ones,
     so that products and ratios of *signed* data are still recovered:
     ``|a*b| = |a|*|b|`` holds regardless of sign. On signed inputs the linear
-    form scores 0.009 for ``a*b`` — completely blind — while the absolute-log
+    form scores 0.009 for ``a*b`` (completely blind) while the absolute-log
     form scores 1.000. It is skipped when any value sits at or below
     ``_POSITIVE_FLOOR`` in magnitude, since ``log`` of a near-zero would produce
     a huge negative that dominates the fit.
+
+    This is the group's R²/log score only. For a binary target it is
+    ceiling-limited (see ``_binary_combination_auc`` below) and is
+    supplemented, not replaced, by that separate check in
+    ``audit_combination_leakage``.
     """
     best = _adjusted_r2(y, X)
     form = "linear"
@@ -157,32 +163,236 @@ def _score_arrays(y: np.ndarray, X: np.ndarray) -> Tuple[float, str]:
     return best, form
 
 
+# Fold count and permutation count for _binary_combination_auc. Both are
+# private, fixed constants rather than public parameters: they trade off
+# runtime against resolution/robustness in ways a caller has no principled
+# basis to tune per-dataset (unlike e.g. max_group_size, which trades off
+# runtime against what shapes of leak can be found at all). See
+# _binary_combination_auc's docstring for what each controls and how they
+# were chosen.
+_CV_FOLDS = 5
+_PERM_ITERATIONS = 200
+_PERM_ALPHA = 0.01
+
+
+def _kfold_fitted(y: np.ndarray, X: np.ndarray, k: int, seed: int) -> np.ndarray:
+    """
+    K-fold cross-validated fitted values of ``y ~ 1 + X``: row ``i``'s value
+    is predicted by a model fit only on the folds *not* containing row ``i``.
+
+    Deliberately literal refitting per fold, not the closed-form
+    leave-one-out (LOOCV) shortcut used elsewhere in statistics for OLS
+    (``fitted[i] = y[i] - residual[i]/(1-h[i][i])``). That shortcut is exact
+    for full LOOCV but was tried first here and rejected: it introduces a
+    *structural* artifact for a weak/null model, not just sampling noise.
+    The LOOCV identity for point ``i`` reduces to (fitted[i] - h[i]*y[i]) /
+    (1-h[i]), which is explicitly linear in that point's own label ``y[i]``.
+    So when leverage ``h`` is small and roughly uniform (the ordinary
+    case: 2-4 predictors over dozens-to-thousands of rows), leave-one-out
+    "predictions" become a near-deterministic, *monotonic* function of each
+    row's own label even when X carries zero information about y, and a
+    rank-based statistic (AUC) reads that monotonicity as apparent
+    near-perfect separation. Verified directly: two independent random
+    features against an independent random binary target, n=200 -- the
+    closed-form LOOCV-fitted values correlated with y itself at r=-0.27
+    (should be ~0 if X truly carries nothing), and swept over permutations
+    of the same data, that artifact alone produced a fitted-value AUC of
+    1.00 (perfect separation) on 1 of 200 permutation draws -- not the rare
+    tail event that would represent, but the direct fingerprint of the
+    formula leaking each point's own label into its own "held out"
+    prediction. K-fold with actual refitting does not have this property:
+    row ``i``'s prediction depends on the *fold's* excluded rows as a group,
+    not algebraically on row ``i``'s own label, which dilutes the same
+    mean-recentering effect roughly in proportion to fold size rather than
+    reproducing it exactly. Swept the same way (independent features vs
+    independent binary target, k=5): mean |corr(cv_fitted, y)| dropped from
+    the LOOCV shortcut's 0.27 to under 0.05.
+
+    ``k=5`` (``_CV_FOLDS``) is a moderate choice: fewer folds (larger held-out
+    groups per fold) dilutes the recentering artifact further but costs
+    estimation precision from smaller training folds; more folds approaches
+    the biased LOOCV shortcut's own behavior as k -> n. 5 was measured to
+    keep the residual bias small (|corr| well under the effect size that
+    would matter) across n in {30, 50, 100, 200} while still resolving a
+    genuine signal cleanly.
+
+    A degenerate fold (fewer training rows than the design needs, i.e.
+    ``n_train <= p + 1``) falls back to the training fold's own mean as its
+    prediction for the held-out rows, rather than raising -- this can only
+    happen with ``min_obs`` close to its floor and a large group size, and a
+    constant fallback prediction cannot itself manufacture separation.
+    """
+    n = len(y)
+    p = X.shape[1]
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(n)
+    folds = np.array_split(order, k)
+    fitted = np.empty(n, dtype=float)
+
+    for fold in folds:
+        train = np.setdiff1d(order, fold, assume_unique=False)
+        if len(train) <= p + 1:
+            fitted[fold] = y[train].mean() if len(train) else float(y.mean())
+            continue
+        design_train = np.column_stack([np.ones(len(train)), X[train]])
+        beta, *_ = np.linalg.lstsq(design_train, y[train], rcond=None)
+        design_test = np.column_stack([np.ones(len(fold)), X[fold]])
+        fitted[fold] = design_test @ beta
+
+    return fitted
+
+
+def _fitted_auc_score(y01: np.ndarray, fitted: np.ndarray) -> Optional[float]:
+    """Direction-agnostic AUC separation of a continuous score against a
+    binary target, via ``equivalence._auc`` (the same rank statistic LEK001
+    uses). ``None`` if one class is absent on this sample."""
+    auc = _pairwise_auc(pd.Series(fitted), y01)
+    if auc is None:
+        return None
+    return max(auc, 1.0 - auc)
+
+
+def _binary_combination_auc(
+    y: np.ndarray, X: np.ndarray, y01: np.ndarray, threshold: float, seed: int = 0
+) -> Optional[Tuple[float, str]]:
+    """
+    Test whether a group's fitted linear combination separates a *binary*
+    target far more than chance, closing a ceiling ``_score_arrays``' plain
+    R² cannot reach for this target type.
+
+    Why R² alone is not enough here: adjusted R² of an OLS fit against a
+    binary target has the same hard ceiling documented in
+    ``leakage.equivalence``'s module docstring -- a point-biserial-type
+    correlation between a continuous score and a binary variable cannot
+    exceed sqrt(2/pi) ~= 0.798, i.e. R² cannot exceed ~0.637, however
+    perfectly the group actually determines the class. A group of features
+    that jointly reconstruct a binary target via a threshold rule on their
+    linear combination (e.g. ``target = 1{a - b > 0}``) is exactly this
+    shape, and would never cross a threshold above that ceiling under R²
+    alone -- the same failure LEK001 (``audit_equivalence``) already had to
+    fix for single columns by switching to AUC separation. This mirrors
+    that fix, applied to a *group's* fitted combination rather than a
+    single raw column.
+
+    Two safeguards beyond a plain AUC-of-fit, both necessary (see
+    ``_kfold_fitted`` for the first in detail):
+
+    1. The continuous score is a K-FOLD cross-validated fit
+       (``_kfold_fitted``), not the in-sample fit. An in-sample OLS fit,
+       scored by AUC, is biased well above 0.5 by chance alone with a
+       handful of unrelated predictors at this module's ``min_obs`` floor
+       (measured mean 0.63, max 0.77 over 50 trials of two independent
+       random features against an independent random binary target at
+       n=30) -- enough to trigger a flag directly by chance, and enough to
+       clear ``gate=0.30`` on essentially every random pair, defeating the
+       gate (see the module docstring's "Triples, without the cost of
+       O(k^3)").
+
+    2. Even with cross-validation, the observed AUC-of-fit is compared
+       against its *own* null distribution by permutation
+       (``_PERM_ITERATIONS`` shuffles of which row each label belongs to,
+       refitting and rescoring identically each time) rather than against a
+       fixed number. AUC has substantially higher small-sample sampling
+       variance than adjusted R² -- at n=30 the standard error of an AUC
+       estimate under the null is large enough that ``max(AUC, 1-AUC)``
+       alone routinely exceeds 0.30 (and occasionally exceeds 0.95) purely
+       from estimation noise, not overfitting, so no fixed cutoff on the
+       raw score is well-calibrated the way it is for adjusted R² (whose
+       null distribution concentrates tightly near 0). The permutation
+       reference distribution is exact for *this* group's own sample size
+       and feature geometry, so it remains valid regardless of any residual
+       bias left over from (1); flagging requires the observed score to
+       clear ``threshold`` AND land in the most extreme ``_PERM_ALPHA``
+       (default 1%) of that reference distribution.
+
+    Only called from ``audit_combination_leakage`` for a binary target, and
+    only on a candidate that has *already* cleared ``gate`` under plain R²
+    -- this keeps the (moderately expensive, ``_PERM_ITERATIONS`` refits)
+    permutation test off the vast majority of candidates, the same way
+    ANO002's ESD diagnostic is only computed when the cheaper rules already
+    disagree. A genuine binary combination clears ``gate`` easily under
+    plain R² alone (a threshold-rule combination scores adjusted R² ~
+    0.60-0.65, well above ``gate=0.30``), so this does not weaken recall;
+    an independent random pair essentially never reaches ``gate`` under R²
+    (this module's own measured false-positive profile: max 0.075 by
+    chance), so this check almost never runs on noise.
+
+    Returns ``(score, "linear-auc")`` if the observed AUC separation clears
+    both ``threshold`` and permutation significance, else ``None``.
+
+    Verified by direct simulation: a two-feature exact reconstruction of a
+    balanced binary target (``target = 1{a - b > 0}``) was flagged in 30/30
+    trials with this check (0/30 under R² alone, since adjusted R² tops out
+    near 0.63-0.65 for that construction and never reaches the default 0.95
+    threshold); an adversarial false-positive sweep -- 30 independent trials
+    of 10 mutually independent random features against an independent
+    random binary target at n=30 (this module's own ``min_obs`` floor),
+    testing all 45 candidate pairs through the real
+    ``audit_combination_leakage`` gate/threshold/permutation pipeline --
+    produced 0 flags.
+    """
+    fitted = _kfold_fitted(y, X, k=_CV_FOLDS, seed=seed)
+    observed = _fitted_auc_score(y01, fitted)
+    if observed is None or observed < threshold:
+        return None
+
+    rng = np.random.default_rng(seed + 1)
+    n = len(y)
+    at_least_as_extreme = 0
+    for i in range(_PERM_ITERATIONS):
+        perm = rng.permutation(n)
+        y_perm, y01_perm = y[perm], y01[perm]
+        perm_fitted = _kfold_fitted(y_perm, X, k=_CV_FOLDS, seed=seed + 2 + i)
+        perm_score = _fitted_auc_score(y01_perm, perm_fitted)
+        if perm_score is not None and perm_score >= observed:
+            at_least_as_extreme += 1
+
+    p_value = (at_least_as_extreme + 1) / (_PERM_ITERATIONS + 1)
+    if p_value < _PERM_ALPHA:
+        return observed, "linear-auc"
+    return None
+
+
 class _Matrix:
     """
     Column-major view of the numeric frame with a precomputed NaN mask.
 
-    Building a ``pd.concat`` per candidate group was the dominant cost — over a
+    Building a ``pd.concat`` per candidate group was the dominant cost: over a
     second for 50 features. Extracting arrays once and slicing with a boolean
     mask brings the same scan down to well under a tenth of that.
     """
 
-    __slots__ = ("y", "columns", "y_ok", "col_ok")
+    __slots__ = ("y", "columns", "y_ok", "col_ok", "y01")
 
-    def __init__(self, y: pd.Series, numeric: pd.DataFrame, features: Sequence[str]):
+    def __init__(
+        self,
+        y: pd.Series,
+        numeric: pd.DataFrame,
+        features: Sequence[str],
+        y01: Optional[pd.Series] = None,
+    ):
         self.y = y.to_numpy(dtype=float)
         self.y_ok = ~np.isnan(self.y)
         self.columns = {c: numeric[c].to_numpy(dtype=float) for c in features}
         self.col_ok = {c: ~np.isnan(v) for c, v in self.columns.items()}
+        # y01 -- the target re-encoded to {0.0, 1.0} -- is only set for a
+        # binary target (see audit_combination_leakage). It shares y's index
+        # and therefore y's NaN pattern exactly (both derive from the same
+        # target column), so masking it with y_ok/col_ok below is valid.
+        self.y01 = y01.to_numpy(dtype=float) if y01 is not None else None
 
     def block(self, names: Sequence[str]):
-        """Complete-case ``(y, X)`` for these columns, or ``(None, None)``."""
+        """Complete-case ``(y, X, y01)`` for these columns; ``y01`` is None
+        unless this matrix was built with one, and ``(None, None, None)`` if
+        no rows survive the mask."""
         mask = self.y_ok
         for name in names:
             mask = mask & self.col_ok[name]
         if not mask.any():
-            return None, None
+            return None, None, None
         X = np.column_stack([self.columns[n][mask] for n in names])
-        return self.y[mask], X
+        y01_masked = self.y01[mask] if self.y01 is not None else None
+        return self.y[mask], X, y01_masked
 
 
 def audit_combination_leakage(
@@ -196,6 +406,7 @@ def audit_combination_leakage(
     gate: float = 0.30,
     max_candidates_per_level: int = 200,
     domain: Optional[str] = None,
+    seed: int = 0,
 ) -> List[Issue]:
     """
     Detect groups of features that jointly reconstruct the target (LEK005).
@@ -208,19 +419,26 @@ def audit_combination_leakage(
         Name of the target column. Must exist in ``df``.
     threshold : float
         Adjusted R² at or above which a group is flagged. Default 0.95, matching
-        LEK001's near-determinism threshold.
+        LEK001's near-determinism threshold. For a *binary* target, a group
+        that reaches ``gate`` under R² but not ``threshold`` is additionally
+        tested via cross-validated AUC separation of its fitted combination
+        (``_binary_combination_auc``), against this same ``threshold`` --
+        adjusted R² alone cannot exceed ~0.64 against a binary target
+        (the point-biserial ceiling; see ``leakage.equivalence``'s module
+        docstring), so without this a genuine binary combination leak can
+        never be flagged regardless of how this parameter is set.
     min_obs : int
         Minimum complete rows required to score a group. Default 30.
     max_features : Optional[int]
         Cap on how many numeric features to consider. ``None`` (default) means no
-        cap. The pair scan is O(k²) — roughly 0.2s for 100 features — so set this
+        cap. The pair scan is O(k²) (roughly 0.2s for 100 features), so set this
         if you have several hundred columns.
     max_reported : int
         Maximum number of findings, best first. Default 10. Prevents a family of
         derived columns producing dozens of near-identical results.
     max_group_size : int
         Largest group to search. Default 3 (pairs and triples). Set 2 for pairs
-        only, or 4+ to find larger identities — each extra level is free on clean
+        only, or 4+ to find larger identities: each extra level is free on clean
         data but can cost time on frames where many features partially explain
         the target. See the module docstring for measured costs.
     gate : float
@@ -234,6 +452,18 @@ def audit_combination_leakage(
         correlated features took 21s at ``max_group_size=4``; with it, 0.7s.
     domain : Optional[str]
         Accepted for API consistency; has no effect.
+    seed : int
+        Seed for the binary-target AUC path's K-fold splits and permutation
+        draws (``_binary_combination_auc``); has no effect on a continuous
+        target, which is scored by plain OLS with no randomness. Default 0,
+        matching this function's previous unconditional behavior, so this
+        parameter is purely additive -- existing callers see no change.
+        Exists so a result can be checked against a second seed as an
+        independent draw (results should agree qualitatively -- same
+        flag/no-flag outcome -- even though the exact score will differ
+        slightly), and so a caller who wants a literal second opinion on a
+        borderline finding can ask for one without it being silently the
+        same computation run twice.
 
     Returns
     -------
@@ -280,11 +510,11 @@ def audit_combination_leakage(
     if y_full.dropna().nunique() < 2:
         return issues
 
-    matrix = _Matrix(y_full, numeric, features)
-
     # Target type/encoding, matching equivalence.py's own rule exactly, so
     # the guard below agrees with LEK001 about what "explains the target
-    # alone" means.
+    # alone" means. Resolved before building the matrix, since the matrix
+    # now carries this same 0/1 encoding for binary targets (see _Matrix's
+    # y01 and _score_arrays' binary-target AUC branch below).
     target_n_unique = y_full.dropna().nunique()
     if target_n_unique == 2:
         categories = sorted(y_full.dropna().unique(), key=str)
@@ -294,20 +524,33 @@ def audit_combination_leakage(
         y_encoded = y_full.astype(float)
         target_type = "continuous"
 
+    matrix = _Matrix(
+        y_full, numeric, features, y01=y_encoded if target_type == "binary" else None
+    )
+
     # Single-column explanatory power, computed once. Used to skip groups whose
     # leakage is already attributable to one column (LEK001's job).
     #
-    # Two metrics are checked, not one. `single` (R^2, linear/log OLS) is
-    # this module's own scoring and is what gets reported as
-    # best_single_adjusted_r2 below. But relying on it alone for the guard
-    # missed columns LEK001 already flags via a different metric
-    # (AUC/Spearman) — see equivalence._score_feature's docstring for the
-    # concrete case. `single_guard` is the max of both, and decides what
-    # counts as "usable"; `single` keeps its original meaning for reporting.
+    # Two metrics are checked, not one. `single` (R^2, linear/log OLS, or --
+    # for a binary target -- AUC-of-fit; see _score_arrays) is this module's
+    # own scoring and is what gets reported as best_single_adjusted_r2 below.
+    # But relying on it alone for the guard missed columns LEK001 already
+    # flags via a different metric (AUC/Spearman). See
+    # equivalence._score_feature's docstring for the concrete case.
+    # `single_guard` is the max of both, and decides what counts as
+    # "usable"; `single` keeps its original meaning for reporting.
     single: Dict[str, Optional[float]] = {}
     single_guard: Dict[str, Optional[float]] = {}
     for col in features:
-        y_vals, X_vals = matrix.block([col])
+        # y01 deliberately not passed here: `single`/`best_single_adjusted_r2`
+        # keeps meaning pure R² for reporting (see the note above and in the
+        # docstring below), same as before this fix. single_guard already
+        # covers the binary-target ceiling for the *guard*'s purposes via
+        # eq_score (AUC/Spearman) below; the group-level ceiling fix lives in
+        # the iterative-deepening loop's own _score_arrays calls further down,
+        # which is where a *group's* combined score, not a single column's,
+        # decides whether LEK005 fires.
+        y_vals, X_vals, _y01_vals = matrix.block([col])
         r2_score = None
         if (
             y_vals is not None
@@ -336,7 +579,7 @@ def audit_combination_leakage(
     # ── Iterative deepening ───────────────────────────────────────────────────
     # Level 2 is every pair. Each subsequent level extends the surviving groups
     # from the level below by one column. A group survives when it reaches
-    # `gate` without reaching `threshold` — i.e. it explains a real share of the
+    # `gate` without reaching `threshold`: i.e. it explains a real share of the
     # target but is not yet an identity, which is exactly the signature of a
     # sub-group of a larger one.
     candidates: List[Tuple[float, frozenset]] = [
@@ -358,13 +601,34 @@ def audit_combination_leakage(
                 continue
 
             columns = sorted(key)
-            y_vals, X_vals = matrix.block(columns)
+            y_vals, X_vals, y01_vals = matrix.block(columns)
             if y_vals is None or len(y_vals) < min_obs:
                 continue
             if any(len(np.unique(X_vals[:, k])) < 2 for k in range(X_vals.shape[1])):
                 continue
 
             score, form = _score_arrays(y_vals, X_vals)
+
+            # Binary-target ceiling fix: plain R² cannot exceed ~0.637
+            # against a binary target (see _binary_combination_auc's
+            # docstring), so a genuine binary combination clears `gate`
+            # (0.30) comfortably but can never reach `threshold` (0.95)
+            # through `score` alone. Only attempted once R² has already
+            # cleared `gate` -- an independent random pair essentially never
+            # does (this module's own measured false-positive profile: max
+            # 0.075 by chance) -- so the extra, permutation-validated work
+            # this does is paid almost exclusively on candidates already
+            # worth the attention, not on the bulk of the search.
+            if (
+                y01_vals is not None
+                and gate <= score < threshold
+            ):
+                boosted = _binary_combination_auc(
+                    y_vals, X_vals, y01_vals, threshold, seed=seed
+                )
+                if boosted is not None:
+                    score, form = boosted
+
             if score >= threshold:
                 found.append(
                     {
@@ -405,11 +669,21 @@ def audit_combination_leakage(
             (single[c] for c in columns if single[c] is not None), default=0.0
         )
         joined = ", ".join(f"'{c}'" for c in columns)
-        relation = (
-            "an additive combination (a sum, difference or weighted mix)"
-            if item["form"] == "linear"
-            else "a multiplicative combination (a product or ratio)"
-        )
+        if item["form"] == "linear":
+            relation = "an additive combination (a sum, difference or weighted mix)"
+        elif item["form"] == "log":
+            relation = "a multiplicative combination (a product or ratio)"
+        else:  # "linear-auc" -- binary target, flagged via _binary_combination_auc
+            relation = (
+                "a threshold rule on a linear combination (binary target; flagged "
+                "by cross-validated AUC separation of the fitted combination, not "
+                "by R², since R² alone cannot exceed ~0.64 against a binary "
+                "target however perfectly the group determines it)"
+            )
+
+        is_auc = item["form"] == "linear-auc"
+        metric_name = "cv_auc_separation" if is_auc else "adjusted_r2"
+        score_label = "cross-validated AUC separation" if is_auc else "adjusted R²"
 
         issues.append(
             Issue(
@@ -418,18 +692,25 @@ def audit_combination_leakage(
                 severity=CRITICAL,
                 description=(
                     f"Features {joined} together reconstruct target '{target}' "
-                    f"(adjusted R²={item['score']:.4f} >= {threshold}, "
+                    f"({score_label}={item['score']:.4f} >= {threshold}, "
                     f"{item['form']} form), while none does alone (best single "
                     f"adjusted R²={best_single:.4f}). This is combination "
-                    f"leakage — the target is likely {relation} of these columns. "
+                    f"leakage: the target is likely {relation} of these columns. "
                     f"Review how it was constructed."
                 ),
                 column=columns[0],
                 evidence={
-                    "metric": "adjusted_r2",
+                    "metric": metric_name,
                     "form": item["form"],
                     "group": columns,
                     "group_size": len(columns),
+                    "group_score": round(float(item["score"]), 4),
+                    # Kept under its original key for continuity with every
+                    # non-binary-target LEK005 finding (the overwhelming
+                    # majority); for a "linear-auc" finding this key holds
+                    # the same AUC-separation value as group_score, not an
+                    # R², since no adjusted R² cleared threshold for this
+                    # group -- see "metric" above for which one it actually is.
                     "group_adjusted_r2": round(float(item["score"]), 4),
                     "best_single_adjusted_r2": round(float(best_single), 4),
                     "threshold": threshold,

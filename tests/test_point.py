@@ -163,16 +163,104 @@ def test_masking_suspected_ratio_boundary():
 
     # iqr_outlier_count on this fixture is 56 (verified below); a mocked ESD
     # count of 20 gives a ratio of ~0.357: below 0.5, above 0.1.
-    original = point_module._generalized_esd
-    point_module._generalized_esd = lambda values, alpha=0.05: 20
+    #
+    # _generalized_esd now lives in tsauditor.anomaly._common (moved there so
+    # remediate.py's repair step can share esd_masking_recovery, which calls
+    # it, with this detector -- see anomaly/_common.py) and returns
+    # (count, positions, bound). audit_point_anomalies no longer calls it
+    # directly -- it goes through esd_masking_recovery -- so the patch target
+    # is _common's own module-level name, which is what esd_masking_recovery
+    # resolves at call time; patching point_module._generalized_esd (still
+    # re-exported there for backward compatibility) would not affect it.
+    # positions/bound are irrelevant here: with a mocked count of 20 against
+    # iqr_outlier_count=56, masking_suspected evaluates False before either is
+    # ever consulted.
+    import tsauditor.anomaly._common as common_module
+
+    original = common_module._generalized_esd
+    common_module._generalized_esd = lambda values, alpha=0.05: (20, [], None)
     try:
         issues = [
             i for i in point_module.audit_point_anomalies(df) if i.code == "ANO002"
         ]
     finally:
-        point_module._generalized_esd = original
+        common_module._generalized_esd = original
 
     ev = issues[0].evidence
     assert ev["iqr_outlier_count"] == 56
     assert 0.1 < ev["esd_outlier_count"] / ev["iqr_outlier_count"] < 0.5
     assert ev["masking_suspected"] is False
+
+
+# ── worst_value/worst_timestamp/max_zscore consistency ─────────────────────
+#
+# Regression. These three evidence fields used to be computed from
+# z_scores.abs().argmax() over the *whole column*, not restricted to the
+# points combined_mask actually flagged. Whenever the z-score and IQR rules
+# disagreed (n_zscore == 0, n_iqr > 0 -- the same "ambiguous" branch the ESD
+# masking diagnostic above exists for) and the single highest-|z| point in
+# the column happened not to be the specific point IQR's fence flagged, the
+# evidence pointed a reader at a row nothing had actually flagged.
+
+
+def test_worst_evidence_points_at_a_flagged_row():
+    """
+    Deterministic repro of the bug (seed=243, n=111, plain standard-normal
+    data — no injected contamination needed): before the fix, this exact
+    input reported worst_timestamp for row 39 while the only flagged row was
+    50.
+    """
+    from tsauditor.anomaly._common import zscore_iqr_masks, zscore_preset
+
+    rng = np.random.default_rng(243)
+    n = 111
+    idx = pd.date_range("2020-01-01", periods=n, freq="D")
+    vals = rng.normal(0, 1, n)
+    df = pd.DataFrame({"x": vals}, index=idx)
+
+    issues = audit_point_anomalies(df, zscore_threshold=None)
+    assert len(issues) == 1
+    ev = issues[0].evidence
+    assert ev["iqr_outlier_count"] == 1
+    assert ev["zscore_outlier_count"] == 0  # the ambiguous branch
+
+    series = pd.Series(vals, index=idx)
+    z_mask, iqr_mask, z_scores, _ = zscore_iqr_masks(series, zscore_preset(None))
+    combined = (z_mask | iqr_mask).to_numpy()
+
+    worst_row = idx.get_loc(pd.Timestamp(ev["worst_timestamp"]))
+    assert combined[worst_row], "worst_timestamp must name a row combined_mask flagged"
+    assert ev["worst_value"] == pytest.approx(float(series.iloc[worst_row]))
+    # max_zscore is rounded to 4dp for display; compare at that precision.
+    assert ev["max_zscore"] == pytest.approx(
+        float(z_scores.abs().iloc[worst_row]), abs=1e-4
+    )
+
+
+@pytest.mark.parametrize("seed", [243, 729, 1074, 1409, 2233])
+def test_worst_evidence_always_matches_a_flagged_row(seed):
+    """
+    General invariant, checked on several seeds known to reproduce the
+    z-score/IQR disagreement branch: whatever ANO002 reports as "worst" must
+    be one of the rows it actually flagged, never an uninvolved row with a
+    coincidentally higher raw z-score.
+    """
+    from tsauditor.anomaly._common import zscore_iqr_masks, zscore_preset
+
+    rng = np.random.default_rng(seed)
+    n = int(rng.integers(30, 120))
+    idx = pd.date_range("2020-01-01", periods=n, freq="D")
+    vals = rng.normal(0, 1, n)
+    df = pd.DataFrame({"x": vals}, index=idx)
+
+    issues = audit_point_anomalies(df, zscore_threshold=None)
+    if not issues:
+        pytest.skip(f"seed {seed} produced no ANO002 issue on this run")
+
+    ev = issues[0].evidence
+    series = pd.Series(vals, index=idx)
+    z_mask, iqr_mask, _, _ = zscore_iqr_masks(series, zscore_preset(None))
+    combined = (z_mask | iqr_mask).to_numpy()
+
+    worst_row = idx.get_loc(pd.Timestamp(ev["worst_timestamp"]))
+    assert combined[worst_row]

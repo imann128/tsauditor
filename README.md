@@ -67,6 +67,7 @@ Optional extras (install only what you need):
 ```bash
 pip install 'tsauditor[pdf]'      # PDF report export (matplotlib)
 pip install 'tsauditor[polars]'   # polars DataFrame input
+pip install 'tsauditor[parallel]' # scan(..., group_col=..., n_jobs=...) panel parallelism
 pip install 'tsauditor[dev]'      # test + lint toolchain (contributors)
 ```
 
@@ -299,11 +300,22 @@ report.to_pdf("report.pdf", df=df, fixed_df=clean)     # needs 'tsauditor[pdf]'
 ```
 
 `to_pdf` produces a formal, vector, text-selectable report (Times New Roman, black text,
-headings and tables, no charts, no colour coding): a Data Health Scorecard, dataset
-overview, before/after comparison, target-leakage callout, executive summary, and a
-paginated issues table. For a panel scan, the issues table becomes a prevalence table
-(one row per finding, with the fraction of entities it hit) instead of a raw per-issue
-dump, matching `report.summary()`'s CLI output.
+headings and tables, almost entirely no charts and no colour coding): a Data Health
+Scorecard, dataset overview, before/after comparison, target-leakage callout, executive
+summary, and a paginated issues table. For a panel scan, the issues table becomes a
+prevalence table (one row per finding, with the fraction of entities it hit) instead of
+a raw per-issue dump, matching `report.summary()`'s CLI output.
+
+The one exception is a lead/lag cross-correlation heatmap page, included automatically
+when you pass `df` and the report has a `target` set (single-series scans only — see
+below): the same feature x lag Spearman grid LEK002 searches, in full, so you can see
+*why* a feature was — or nearly was — flagged instead of only its reported peak lag.
+Ranked by peak |correlation| and truncated to `heatmap_top_n` features (default 30) if
+there are more than that; omit it with `to_pdf(..., include_correlation_heatmap=False)`,
+or tune `heatmap_max_lag`/`heatmap_top_n`. Not yet available for panel scans
+(`scan(..., group_col=...)`) — the PDF prints a one-line note there instead of guessing
+at per-entity-vs-pooled aggregation. The underlying grid is also available directly via
+`tsauditor.leakage.correlation.lag_correlation_matrix(df, target=...)`.
 
 ## Feeding a forecasting model (TimesFM adapter)
 
@@ -380,6 +392,16 @@ values can never fill another's gaps, and `health_score()`/`to_json()`/`to_pdf()
 each entity's own cells against its own distribution rather than mixing scales across
 entities. `fix()` accepts `group_col=` directly, for a one-shot scan + repair without
 calling `scan()` and `apply_fixes()` separately. See the [Panel Data](https://github.com/imann128/tsauditor/wiki/Panel-Data) wiki page.
+
+**Parallelize a long-format panel scan.** If your entities already live in one
+long-format frame (the `group_col=` case above), pass `n_jobs=` directly instead of
+re-partitioning it into separate frames first: `scan(df, group_col="ticker", n_jobs=-1)`
+audits entities through `joblib.Parallel` and returns byte-identical results to
+`n_jobs=1` regardless of worker count or completion order. Needs `joblib`
+(`pip install 'tsauditor[parallel]'`); a clear `ImportError` names that extra if it
+isn't installed. Matters most for many small entities (hundreds to thousands of
+tickers/sensors/stores), where per-entity fixed overhead dominates; a handful of large
+entities gains little.
 
 **Audit separate frames in parallel.** If your entities live in separate DataFrames
 rather than one long-format frame, `scan()` is a pure function and `GuardReport` is a

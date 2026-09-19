@@ -109,6 +109,10 @@ Computes `r0` (feature vs target), `persistence` (target vs shifted target), and
 
 This exists because computing the three on independent pairwise-complete samples let them silently describe different populations whenever a feature has its own missingness (e.g. a column only recorded starting partway through the series). Confirmed concretely: on a target with a genuine regime change (persistence 0.97 early, 0.0 late) and a feature recorded only in the low-persistence half, whole-series persistence came out ~0.75 against the feature's own-population persistence of ~0.22, a gap large enough to hide a real lag −1 leak (excess ~0.06, unflagged, versus ~0.14, correctly flagged, once aligned).
 
+### `_fisher_z(r)`: `leakage/temporal.py` and `panel.py` (since 0.6.0)
+
+`float(np.arctanh(np.clip(r, -0.999999, 0.999999)))`. Two independent copies, one per module, deliberately not shared/imported cross-package. Used to compute `excess(k) = arctanh(observed) - arctanh(expected)` in place of the old raw difference in both `audit_temporal_leakage` (LEK003) and `audit_cross_sectional_leakage` (PNL002) — see [Detectors: Leakage](Detectors-Leakage#lek003-lookahead-beyond-persistence) for why. The raw-difference version lost recall as persistence approached 1.0 (verified via a φ-sweep to 0% recall at φ ≥ 0.97); Fisher-z restored 100% recall with no measured false-positive increase across the same sweep. A ratio reformulation (`(observed-expected)/(1-expected)`) was tried first and rejected: it also restored recall but produced a 12–30% false-positive rate near φ ≥ 0.95, since dividing by a near-zero denominator amplifies ordinary Spearman sampling noise.
+
 ### `_score_feature(x, y, target_type, min_obs)`: `leakage/equivalence.py`
 
 LEK001's own scoring function (AUC for a binary target, absolute Spearman for continuous), extracted so `audit_combination_leakage`'s single-feature guard can call it directly. Before this existed as a shared function, `combination.py`'s guard only checked its own adjusted-R² metric, which could miss a column LEK001 already flagged via AUC/Spearman on a strong monotonic-but-nonlinear relationship (R² well below LEK005's threshold, AUC/Spearman near 1.0). The guard now takes `max(adjusted_r2, equivalence_score)` per column.
@@ -130,11 +134,23 @@ Also checks `index.tz` against the availability Series' `.dt.tz` and raises a `V
 
 `_score_arrays` returns the better of the **linear** and **log** forms, where the log form fits `log|y| ~ log|X|`. Absolute values are deliberate: `|a*b| = |a|*|b|` holds regardless of sign, so signed products and ratios are recovered. It is skipped when any magnitude falls below `_POSITIVE_FLOOR` (1e-12), since `log` of a near-zero would dominate the fit.
 
-`_Matrix` is a column-major view with a precomputed NaN mask. Building a `pd.concat` per candidate group was the dominant cost, over a second for 50 features; slicing preextracted arrays with a boolean mask brought the same scan to 0.07s.
+`_Matrix` is a column-major view with a precomputed NaN mask. Building a `pd.concat` per candidate group was the dominant cost, over a second for 50 features; slicing preextracted arrays with a boolean mask brought the same scan to 0.07s. **Since 0.6.0**, `_Matrix` optionally carries `y01` (the target re-encoded to `{0.0, 1.0}`) alongside `y`, used only for a binary target — see `_binary_combination_auc` below.
 
-### `_generalized_esd(values, alpha)`: `anomaly/point.py`
+### `_kfold_fitted`, `_binary_combination_auc`: `leakage/combination.py` (since 0.6.0)
 
-Rosner (1983). Removes the most extreme point and **recomputes** the mean and standard deviation before testing the next, so masking cannot occur by construction. Reported as evidence only (it never changes what ANO002 flags), and computed solely for the ambiguous case (z-score count 0, IQR count above 0), since it is O(k·n).
+Closes a ceiling `_score_arrays`' plain adjusted R² cannot reach against a **binary** target: the same point-biserial ceiling (R² ≤ ~0.637) documented for LEK001 in `leakage/equivalence.py`'s module docstring applies here too, so a group that genuinely determines a binary target via a threshold rule on its linear combination can clear `gate` but never `threshold` through R² alone.
+
+`_kfold_fitted(y, X, k, seed)` returns k-fold cross-validated fitted values — literal per-fold refitting, **not** the closed-form LOOCV shortcut. The shortcut was tried and rejected: its per-point identity is algebraically linear in that point's own label, which manufactures a rank-detectable AUC artifact even when `X` carries zero information (measured mean \|corr\| of 0.27 between LOOCV-shortcut fitted values and an independent random target, versus under 0.05 for literal k-fold with k=5).
+
+`_binary_combination_auc(y, X, y01, threshold, seed)` scores the k-fold fitted combination's AUC separation against `y01` (via `equivalence._auc`, direction-agnostic), then validates that score against its own permutation null (`_PERM_ITERATIONS=200` reshuffles, refit each time, significant at `_PERM_ALPHA=0.01`) rather than a fixed cutoff — AUC's small-sample variance is too large at this module's `min_obs` floor for a fixed threshold to be well-calibrated the way it is for R². Only invoked once a candidate has already cleared `gate` under plain R², keeping the ~201-refit cost off the bulk of the search. Returns `(score, "linear-auc")` on success; `audit_combination_leakage` reports `evidence["metric"] = "cv_auc_separation"` and `evidence["form"] = "linear-auc"` for a finding reached this way, `evidence["group_score"]` alongside the existing `group_adjusted_r2` key.
+
+### `_generalized_esd(values, alpha)` / `esd_masking_recovery(...)`: `anomaly/_common.py`
+
+**Since 0.6.0, `_generalized_esd` lives in `anomaly/_common.py`**, not `anomaly/point.py` (`point.py` still imports and re-exports it for backward compatibility). It moved alongside a new sibling, `esd_masking_recovery`, so `remediate.py` can share the exact same masking-suspected decision `audit_point_anomalies` uses — the same centralization argument that already applies to `zscore_iqr_masks`/`clip_bounds`/etc above.
+
+Rosner (1983). Removes the most extreme point and **recomputes** the mean and standard deviation before testing the next, so masking cannot occur by construction. Signature is `(count, positions, bound) -> Tuple[int, List[int], Optional[Tuple[float,float,float]]]`; `bound` is deliberately always `None` — no single `(mean, std, critical)` triple is guaranteed to exclude every ESD-flagged point, since Rosner's test is sequential and its stopping point is a property of the whole removal sequence, not a per-point threshold. Verified adversarially (n=200, sweeping contamination and magnitude across 59 seeds): both a boundary-step and a post-removal-step candidate band left points inside themselves that ESD had flagged. Computed solely for the ambiguous case (z-score count 0, IQR count above 0), since it is O(k·n).
+
+`esd_masking_recovery(series, z_mask, iqr_mask) -> EsdRecovery` (`masking_suspected: bool, n_esd: Optional[int], esd_positions: List[int]`) centralizes the `n_esd > n_iqr * 0.5` masking-suspected heuristic and gates `esd_positions` on it. **Since 0.6.0, this is no longer diagnostic-only**: `anomaly/point.py` folds `esd_positions` into `combined_mask` (so ESD-recovered points actually get flagged by the ANO002 issue, counted in `evidence["esd_recovered_count"]`), and `remediate.py`'s `_outlier_mask`/`_esd_masking_repair` fold the same positions into repair. Before 0.6.0, ESD's findings under masking were reported in evidence but never actually flagged or repaired — see [Detectors: Anomaly](Detectors-Anomaly#reading-a-zero-agreement_count) and [Remediation](Remediation#apply_fixes) for the two halves of that fix.
 
 Capped at `_ESD_MAX_FRACTION` (40%) of the column length: beyond that the "outliers" are a second population rather than anomalies.
 
@@ -248,6 +264,16 @@ Position-based (`np.argsort` + `.iloc`), not `.sort_index()` + relabel: a duplic
 
 `"interpolate"` uses `method="time"` on a `DatetimeIndex` and `method="linear"` otherwise, with `limit_direction="both"` so leading and trailing NaNs are also filled. `"ffill"` and `"bfill"` are straightforward.
 
+### `_resolve_detector_settings(report)`: `remediate.py` (since 0.6.0)
+
+Resolves `zscore_threshold`, `stuck_window`, `spike_threshold`, `spike_window`, and `handle_missing` from `report.metadata`, preferring an explicit (non-`None`) value the caller passed to `scan()` over the domain-derived preset — the same "`None` means unset, not falsy" precedence `audit_point_anomalies`/`audit_contextual_anomalies` already use internally. Called by `apply_fixes`, `affected_cells`, and (through them) `health_score`.
+
+Before this existed, these five settings were never recorded in `report.metadata` at all, so an explicit override passed to `scan()` was honored by the detectors but silently ignored by every repair-side function, which always fell back to the domain preset regardless. A report built from an older or hand-constructed `metadata` dict without these keys degrades to that previous domain-only behavior via `.get(..., None)`, not a `KeyError`.
+
+### `_esd_masking_repair(out_col, values, z_thresh)`: `remediate.py` (since 0.6.0)
+
+The repair-side half of the ESD masking-recovery fix (see `esd_masking_recovery` above). Sets ESD-recovered points to NaN, restricted to positions not already covered by the ordinary z/IQR clip, rather than inventing a second clip band for them — see [Remediation](Remediation#apply_fixes) for why a targeted clip band was tried first and rejected (24 of 951 masking-suspected cases in an adversarial sweep left the point's value unchanged by that band). Returns `(out_col, recovered_idx)`; a no-op (`recovered_idx` empty) when masking wasn't suspected on this column.
+
 ---
 
 ## Health score internals
@@ -262,7 +288,7 @@ _QUALITY_CODES = ("PRF002", "PRF006", "PRF007", "ANO001", "ANO002", "ANO003")
 
 Per column, it builds a boolean mask by OR-ing together the relevant per-code masks, then counts. Because it is a union, a cell flagged by both ANO002 and ANO003 counts **once**.
 
-The masks are recomputed here, not read from the issues: the `Issue` objects carry counts, not positions. The actual per-column mask logic is factored into `_affected_cells_single(issues, df, z_thresh, window, spike_thresh)`, given only one series' worth of data and Issues.
+The masks are recomputed here, not read from the issues: the `Issue` objects carry counts, not positions. The actual per-column mask logic is factored into `_affected_cells_single(issues, df, z_thresh, window, spike_thresh, spike_window=SPIKE_WINDOW, handle_missing="strict")`, given only one series' worth of data and Issues. All five threshold/window arguments come from `_resolve_detector_settings(report)` (see above), not straight from the domain preset, since 0.6.0.
 
 **Panel-aware.** When `report.metadata["group_col"]` is set, `affected_cells` calls `_affected_cells_single` once per entity, on that entity's own slice of `df` and only its own Issues, then sums. Every quality detector actually ran per-entity during the original scan (`scanner.py`'s per-partition loop), so recomputing one mask across the whole interleaved panel instead would mix every entity's values into a single mean/std/rolling-window: a real outlier in a small-scale entity can be diluted below a large-scale entity's ordinary range and vanish from the count entirely, or the reverse. Rows with a null entity id (PNL004) are skipped, since they were never scanned per-entity to begin with.
 

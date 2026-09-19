@@ -2,7 +2,7 @@
 tsauditor.remediate
 --------------------
 The execution layer behind ``GuardReport.apply_fixes``. Where the report's
-``suggestions()`` *say* what to do, this *does* it — but only for the columns
+``suggestions()`` *say* what to do, this *does* it, but only for the columns
 the audit actually flagged, and always on a copy.
 
 Design guarantees
@@ -12,7 +12,7 @@ Design guarantees
 - **Report-driven.** Only columns flagged by the audit are touched; healthy,
   unflagged columns are returned byte-for-byte unchanged.
 - **Time-series safe.** "Dropping" an outlier means setting it to NaN (so the
-  imputation step can fill it), never deleting a row — deleting rows would
+  imputation step can fill it), never deleting a row: deleting rows would
   break the index's uniform frequency and re-trigger the gap detectors.
 - **Auditable.** A structured change log is attached to the report
   (``report.last_fixes``) recording every column touched and how many cells
@@ -42,6 +42,7 @@ from tsauditor.anomaly._common import (
     spike_threshold_preset,
     zscore_iqr_masks,
     clip_bounds,
+    esd_masking_recovery,
     stuck_run_mask,
     spike_bounds,
     SPIKE_WINDOW,
@@ -55,10 +56,109 @@ _LEAKAGE_METHODS = {"drop", None}
 
 
 def _outlier_mask(values: pd.Series, z_thresh: float) -> pd.Series:
-    """Combined z-score OR IQR outlier mask -- thin wrapper over the shared
-    ANO002 mask, which also detects the degenerate (zero-variance) case."""
+    """Combined z-score OR IQR outlier mask, plus ESD-recovered points under
+    masking -- must match what ``audit_point_anomalies`` (ANO002) itself
+    flags, or ``apply_fixes(outliers="nan"/"drop")`` silently leaves some of
+    what ``scan()`` reported untouched.
+
+    Uses ``esd_masking_recovery`` (``tsauditor.anomaly._common``), the same
+    function ``audit_point_anomalies`` uses for exactly this decision, rather
+    than an independent re-derivation of "ambiguous"/"masking_suspected" --
+    see that function's docstring, and ``anomaly/_common.py``'s module
+    docstring for why a duplicated copy of this logic is itself the failure
+    mode this centralization exists to prevent (CHANGELOG [0.5.0]).
+
+    Also detects the degenerate (zero-variance) case, via
+    ``zscore_iqr_masks``.
+
+    Covers ``outliers="nan"`` and ``"drop"``. ``outliers="clip"`` also
+    reaches ESD-recovered points, but not through this mask -- see
+    ``_esd_masking_repair`` and the "clip" branch of ``apply_fixes``: those
+    specific points get NaN-ed rather than clipped, for the same reason
+    they are gathered separately below.
+    """
     z_mask, iqr_mask, _, _ = zscore_iqr_masks(values, z_thresh)
-    return z_mask | iqr_mask
+    combined = z_mask | iqr_mask
+
+    recovery = esd_masking_recovery(values, z_mask, iqr_mask)
+    if recovery.esd_positions:
+        recovered = np.zeros(len(values), dtype=bool)
+        recovered[recovery.esd_positions] = True
+        combined = combined | pd.Series(recovered, index=values.index)
+
+    return combined
+
+
+def _esd_masking_repair(
+    out_col: pd.Series, values: pd.Series, z_thresh: float
+) -> "tuple[pd.Series, pd.Index]":
+    """
+    Repair the specific rows ESD recovered under masking by setting them to
+    NaN (for the ``missing`` imputation step to fill), on top of whatever
+    the ordinary z-band/IQR-fence clip (``clip_bounds``) already did to
+    ``out_col``. Returns ``(out_col, recovered_idx)``; ``recovered_idx`` is
+    empty unless ``esd_masking_recovery`` reports masking.
+
+    Why NaN and not a second, targeted clip: an earlier version of this
+    function clipped these rows to a "band ESD used to judge them", derived
+    from ``_generalized_esd``. That band does not actually exist in
+    general -- see ``_generalized_esd``'s docstring: Rosner's test is a
+    sequential procedure whose stopping point is a property of the whole
+    removal sequence, not a per-point threshold, so no single band (nor a
+    per-point one) is guaranteed to be genuinely outside every point the
+    test flags. Verified by adversarial simulation (n=200, sweeping
+    contamination fraction in {0.15, 0.2, 0.246, 0.3} and magnitude in
+    {4.0, 4.5, 5.0, 5.58, 6.0} across 59 seeds): of 951 masking-suspected
+    cases, 24 had at least one ESD-recovered point whose value the "ESD
+    band" clip left unchanged, i.e. the point was already inside the
+    invented band -- exactly the "scan() flags it, apply_fixes() silently
+    doesn't repair it" bug class this module exists to prevent (see the
+    module docstring and CHANGELOG [0.5.0]). NaN has no such gap: it always
+    changes the cell, unconditionally, for every recovered row, matching
+    what "nan"/"drop" repair (and ``scan()`` itself) already report. This
+    means ``outliers="clip"`` for a masked column produces a column that is
+    literally clipped everywhere clip_bounds could reach, and NaN-then-
+    imputed for the handful of points only ESD could name -- documented
+    here rather than left as a silent inconsistency in what "clip" means
+    for that column.
+
+    Why a second, targeted step at all rather than folding these rows into
+    the ordinary clip mask: an ESD-recovered point is, by construction,
+    already inside the z-band/IQR-fence intersection ``clip_bounds``
+    computes -- that is the entire reason the z-score and IQR rules both
+    missed it -- so nothing in the ordinary clip pass would ever touch it
+    without this separate step naming it explicitly.
+
+    Restricted to positions ``esd_masking_recovery`` flagged that the IQR
+    rule (the only one of z-score/IQR that can be non-empty here --
+    ``esd_masking_recovery`` only runs when ``n_zscore == 0``) did *not*
+    already flag. ``recovery.esd_positions`` itself is the full ESD-flagged
+    set and can overlap ``iqr_mask`` (ESD is computed over the whole column,
+    independently of what IQR already caught); those overlapping points
+    already got a well-defined winsorization target from ``clip_bounds``
+    two lines above the call site, and re-NaN-ing them here would discard a
+    perfectly good clip in favor of a NaN for no reason. Regression-tested:
+    without this exclusion, a point flagged by both IQR and ESD ended up
+    NaN instead of clipped, silently changing what "clip" mode did for a
+    point that never actually needed the ESD fallback.
+    """
+    z_mask, iqr_mask, _, _ = zscore_iqr_masks(values, z_thresh)
+    recovery = esd_masking_recovery(values, z_mask, iqr_mask)
+    if not recovery.esd_positions:
+        return out_col, values.index[:0]
+
+    already_flagged = (z_mask | iqr_mask).to_numpy()
+    recovered_positions = [p for p in recovery.esd_positions if not already_flagged[p]]
+    if not recovered_positions:
+        return out_col, values.index[:0]
+
+    recovered_idx = values.index[recovered_positions]
+    # .loc restricts the write to exactly these rows -- every other cell in
+    # out_col, including the ones the ordinary clip_bounds pass already
+    # touched, is left exactly as it was.
+    out_col = out_col.copy()
+    out_col.loc[recovered_idx] = np.nan
+    return out_col, recovered_idx
 
 
 def _impute(series: pd.Series, method: str, datetime_index: bool) -> pd.Series:
@@ -70,6 +170,50 @@ def _impute(series: pd.Series, method: str, datetime_index: bool) -> pd.Series:
     if method == "bfill":
         return series.bfill()
     return series
+
+
+def _resolve_detector_settings(report):
+    """
+    Resolve the four detector thresholds/windows and the missing-data
+    handling mode that ``apply_fixes``/``affected_cells`` need to recompute
+    exactly the masks ``scan()`` used, from ``report.metadata``.
+
+    An explicit value the caller passed to ``scan()`` always wins; only a
+    genuinely unset (``None``) entry falls back to the domain-derived
+    preset -- the same "is None, not falsy" precedence
+    ``audit_point_anomalies``/``audit_contextual_anomalies`` themselves use,
+    so a deliberate ``0`` is honoured rather than treated as "unset".
+
+    These five keys were not recorded in ``report.metadata`` at all before
+    this function existed, so every caller here silently fell back to the
+    domain-only preset regardless of any explicit override ``scan()``
+    itself used to detect -- repairing with the wrong threshold, or scoring
+    health against a mask that didn't match what was actually flagged. A
+    report built by an older/hand-constructed metadata dict without these
+    keys degrades gracefully to the previous (domain-only) behavior via
+    ``.get(..., None)``, not a KeyError.
+    """
+    domain = report.metadata.get("domain")
+
+    z_thresh = report.metadata.get("zscore_threshold")
+    if z_thresh is None:
+        z_thresh = zscore_preset(domain)
+
+    window = report.metadata.get("stuck_window")
+    if window is None:
+        window = stuck_window_preset(domain)
+
+    spike_thresh = report.metadata.get("spike_threshold")
+    if spike_thresh is None:
+        spike_thresh = spike_threshold_preset(domain)
+
+    spike_window = report.metadata.get("spike_window")
+    if spike_window is None:
+        spike_window = SPIKE_WINDOW
+
+    handle_missing = report.metadata.get("handle_missing") or "strict"
+
+    return z_thresh, window, spike_thresh, spike_window, handle_missing
 
 
 # ── main entry point ──────────────────────────────────────────────────────────
@@ -99,15 +243,22 @@ def apply_fixes(
         handling). Default "interpolate".
     outliers : {"clip", "nan", "drop", None}
         Handles both global point outliers (ANO002) and contextual spikes
-        (ANO003). "clip" winsorizes flagged points to the detection bounds —
-        global IQR/z bounds for ANO002, the local rolling band for ANO003;
-        "nan" sets them to NaN for the imputation step. "drop" is an alias for
-        "nan" — rows are never deleted (that would break the time index).
+        (ANO003). "clip" winsorizes flagged points to the detection bounds:
+        global IQR/z bounds for ANO002, the local rolling band for ANO003.
+        Exception: a point ANO002 flagged only because ESD detected z-score
+        masking (see ``audit_point_anomalies``'s Notes) sits inside the
+        ordinary IQR/z bounds by construction, so no clip target for it
+        exists. It is NaN-ed and left to the ``missing`` imputation step
+        instead, the same as "nan"/"drop" mode would do for it (see
+        ``remediate._esd_masking_repair``'s docstring for why a clip target
+        was tried and found statistically unsound). "nan" sets flagged
+        points to NaN for the imputation step. "drop" is an alias for "nan":
+        rows are never deleted (that would break the time index).
         Default "clip".
     stuck : {"nan", None}
         "nan" replaces flagged stuck runs with NaN. Default "nan".
     leakage : {"drop", None}
-        "drop" removes columns flagged by the leakage module. Off by default —
+        "drop" removes columns flagged by the leakage module. Off by default:
         dropping columns changes the feature matrix and must be explicit.
     verbose : bool
         If True, print a summary of the changes.
@@ -214,7 +365,9 @@ def apply_fixes(
             df = df.iloc[sort_positions]
 
     out = df.copy()
-    domain = report.metadata.get("domain")
+    z_thresh, stuck_window, spike_thresh, spike_window, handle_missing = (
+        _resolve_detector_settings(report)
+    )
     # Never repair the target column (the label): binary targets trip ANO001,
     # and interpolating a 0/1 label into fractions is wrong.
     protected = report.metadata.get("target")
@@ -238,7 +391,7 @@ def apply_fixes(
     missing_cols = _flagged("PRF002", "PRF006")
     nan_filled_cols: set = set()
 
-    # 1. Leakage — drop flagged columns (opt-in only; never the target).
+    # 1. Leakage: drop flagged columns (opt-in only; never the target).
     if leakage == "drop":
         for col in report.leaky_columns():
             if col in out.columns and col != protected:
@@ -247,7 +400,7 @@ def apply_fixes(
                     {"column": col, "action": "drop_column", "cells_changed": "—"}
                 )
 
-    # 2. Outliers — clip to bounds, or NaN-out for imputation.
+    # 2. Outliers: clip to bounds, or NaN-out for imputation.
     #
     # Every mask/bounds computation below reads from `df[col]` (the pristine,
     # pre-repair column), never `out[col]`. A column can carry more than one
@@ -265,7 +418,6 @@ def apply_fixes(
     # later step here always finds exactly what its own Issue reported,
     # regardless of what an earlier step already touched.
     if outliers is not None:
-        z_thresh = zscore_preset(domain)
         for col in outlier_cols:
             if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
                 continue
@@ -283,6 +435,32 @@ def apply_fixes(
                         "bounds": (float(lower), float(upper)),
                     }
                 )
+
+                # Second, targeted pass: ESD-recovered points (see
+                # _esd_masking_repair's docstring) are, by construction,
+                # inside [lower, upper] already -- the clip above cannot
+                # move them -- so they are NaN-ed instead, restricted to
+                # exactly those rows, and left for the `missing` imputation
+                # step below. A no-op when masking wasn't suspected on this
+                # column. Logged and added to nan_filled_cols separately so
+                # the imputation step (which only runs over nan_filled_cols)
+                # actually reaches these cells.
+                repaired, recovered_idx = _esd_masking_repair(
+                    out[col], values, z_thresh
+                )
+                if len(recovered_idx) > 0:
+                    already_nan = int(out.loc[recovered_idx, col].isna().sum())
+                    newly = int(len(recovered_idx) - already_nan)
+                    out[col] = repaired
+                    nan_filled_cols.add(col)
+                    log.append(
+                        {
+                            "column": col,
+                            "action": "esd_masked_outliers_to_nan",
+                            "cells_changed": newly,
+                            "already_nan": already_nan,
+                        }
+                    )
             else:  # "nan" / "drop"
                 mask = _outlier_mask(values, z_thresh)
                 idx = mask[mask].index
@@ -314,12 +492,22 @@ def apply_fixes(
 
         # Contextual spikes (ANO003): a local anomaly, so clip to the local
         # band rather than a global bound, or NaN it for imputation.
-        spike_thresh = spike_threshold_preset(domain)
         for col in spike_cols:
             if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
                 continue
-            values = df[col].dropna()
-            mask, lower, upper = spike_bounds(values, SPIKE_WINDOW, spike_thresh)
+            # Mirror audit_contextual_anomalies exactly: handle_missing
+            # bridges a single-row gap before ANO003 looks at the series,
+            # so the mask recomputed here must start from the same
+            # bridged view the original detection used, not a plain
+            # dropna() -- otherwise a caller who set
+            # scan(handle_missing="interpolate") gets a report that
+            # correctly found a spike next to a bridged gap, and a repair
+            # step that silently can't find it again.
+            series = df[col]
+            if handle_missing == "interpolate":
+                series = series.interpolate(method="linear", limit=1)
+            values = series.dropna()
+            mask, lower, upper = spike_bounds(values, spike_window, spike_thresh)
             idx = mask[mask].index
             if len(idx) == 0:
                 continue
@@ -348,13 +536,12 @@ def apply_fixes(
                     }
                 )
 
-    # 3. Stuck values — replace flagged runs with NaN.
+    # 3. Stuck values: replace flagged runs with NaN.
     if stuck == "nan":
-        window = stuck_window_preset(domain)
         for col in stuck_cols:
             if col not in out.columns or not pd.api.types.is_numeric_dtype(out[col]):
                 continue
-            mask, _ = stuck_run_mask(df[col], window)
+            mask, _ = stuck_run_mask(df[col], stuck_window)
             if mask.any():
                 idx = mask[mask].index
                 already_nan = int(out.loc[idx, col].isna().sum())
@@ -370,7 +557,7 @@ def apply_fixes(
                     }
                 )
 
-    # 3b. Infinite values — always converted to NaN, then imputed with everything
+    # 3b. Infinite values: always converted to NaN, then imputed with everything
     #     else if `missing` is enabled.
     #
     #     Unconditional, unlike every other repair above, because there is no
@@ -395,7 +582,7 @@ def apply_fixes(
                 }
             )
 
-    # 4. Imputation — fill flagged-missing columns plus anything we NaN-ed above.
+    # 4. Imputation: fill flagged-missing columns plus anything we NaN-ed above.
     if missing is not None:
         impute_cols = set(missing_cols) | nan_filled_cols
         for col in impute_cols:
@@ -533,6 +720,11 @@ def fix(
     available_at: Optional[dict] = None,
     constraints: Optional[dict] = None,
     group_col: Optional[str] = None,
+    zscore_threshold: Optional[float] = None,
+    stuck_window: Optional[int] = None,
+    spike_threshold: Optional[float] = None,
+    spike_window: Optional[int] = None,
+    handle_missing: str = "strict",
     missing: Optional[str] = "interpolate",
     outliers: Optional[str] = "clip",
     stuck: Optional[str] = "nan",
@@ -545,7 +737,7 @@ def fix(
     A convenience wrapper over ``scan()`` + ``GuardReport.apply_fixes()``. It
     always returns *both* the repaired copy and the report, so the audit trail
     (``report.last_fixes``, ``report.leaky_columns()``, the full issue list) is
-    never silently discarded — you keep the record of what changed and why.
+    never silently discarded: you keep the record of what changed and why.
 
     The input ``df`` is never modified; ``clean_df`` is an independent copy.
     Pass ``target=`` so the label column is protected from every repair.
@@ -568,6 +760,15 @@ def fix(
     argument for this: it reads ``group_col`` back off ``report.metadata``,
     which ``scan()`` populates.
 
+    ``zscore_threshold=``, ``stuck_window=``, ``spike_threshold=``,
+    ``spike_window=``, and ``handle_missing=`` are passed straight through
+    to ``scan()`` too, for the same reason as the rest of this list:
+    without them here, tuning detection meant calling ``scan()`` and
+    ``apply_fixes()``/``fix()`` separately, since ``fix()`` had no way to
+    accept them at all. ``apply_fixes`` itself needs no separate argument
+    for these either -- like ``group_col``, it reads them back off
+    ``report.metadata``, which ``scan()`` now records.
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -583,6 +784,16 @@ def fix(
     constraints : dict | None
         Passed through to ``scan``; see above for why it matters here.
     group_col : str | None
+        Passed through to ``scan``; see above for why it matters here.
+    zscore_threshold : float | None
+        Passed through to ``scan``; see above for why it matters here.
+    stuck_window : int | None
+        Passed through to ``scan``; see above for why it matters here.
+    spike_threshold : float | None
+        Passed through to ``scan``; see above for why it matters here.
+    spike_window : int | None
+        Passed through to ``scan``; see above for why it matters here.
+    handle_missing : str
         Passed through to ``scan``; see above for why it matters here.
     missing : str | None
         Passed through to ``apply_fixes``.
@@ -615,6 +826,11 @@ def fix(
         available_at=available_at,
         constraints=constraints,
         group_col=group_col,
+        zscore_threshold=zscore_threshold,
+        stuck_window=stuck_window,
+        spike_threshold=spike_threshold,
+        spike_window=spike_window,
+        handle_missing=handle_missing,
     )
     clean = apply_fixes(
         report,
@@ -636,7 +852,7 @@ def _print_log(log: List[Dict[str, Any]]) -> None:
         if not log:
             console.print("[green]apply_fixes: nothing to repair.[/green]")
             return
-        console.print("[bold]apply_fixes — changes applied[/bold]")
+        console.print("[bold]apply_fixes: changes applied[/bold]")
         for entry in log:
             console.print(
                 f"  • {entry['column']}: {entry['action']} "
@@ -651,7 +867,13 @@ _QUALITY_CODES = ("PRF002", "PRF006", "PRF007", "ANO001", "ANO002", "ANO003")
 
 
 def _affected_cells_single(
-    issues, df: pd.DataFrame, z_thresh: float, window: int, spike_thresh: float
+    issues,
+    df: pd.DataFrame,
+    z_thresh: float,
+    window: int,
+    spike_thresh: float,
+    spike_window: int = SPIKE_WINDOW,
+    handle_missing: str = "strict",
 ) -> int:
     """Affected-cell count for one series (single entity or non-panel), given
     only *its own* Issues. Factored out of affected_cells so the panel path
@@ -681,8 +903,16 @@ def _affected_cells_single(
             om = _outlier_mask(values, z_thresh)
             mask.loc[om[om].index] = True
         if "ANO003" in codes and len(values):
-            sm, _, _ = spike_bounds(values, SPIKE_WINDOW, spike_thresh)
-            mask.loc[sm[sm].index] = True
+            # Same handle_missing-aware bridging as apply_fixes -- see the
+            # comment there for why a plain dropna() can silently disagree
+            # with what the original audit_contextual_anomalies() call saw.
+            spike_series = s
+            if handle_missing == "interpolate":
+                spike_series = spike_series.interpolate(method="linear", limit=1)
+            spike_values = spike_series.dropna()
+            if len(spike_values):
+                sm, _, _ = spike_bounds(spike_values, spike_window, spike_thresh)
+                mask.loc[sm[sm].index] = True
         if "ANO001" in codes:
             km, _ = stuck_run_mask(s, window)
             mask |= km.fillna(False)
@@ -693,7 +923,7 @@ def _affected_cells_single(
 def affected_cells(report, df: pd.DataFrame) -> int:
     """
     Count distinct data cells implicated by detected *quality* issues (missing,
-    point outliers, contextual spikes, stuck runs). Leakage is excluded — a
+    point outliers, contextual spikes, stuck runs). Leakage is excluded: a
     leaky column is a modeling risk, not a corrupt cell. Cells flagged by more
     than one detector in the same column are counted once.
 
@@ -710,15 +940,20 @@ def affected_cells(report, df: pd.DataFrame) -> int:
     makes ``health_score()`` and ``to_json(df=...)``'s health block trustworthy
     for panel data instead of silently wrong.
     """
-    domain = report.metadata.get("domain")
-    z_thresh = zscore_preset(domain)
-    window = stuck_window_preset(domain)
-    spike_thresh = spike_threshold_preset(domain)
+    z_thresh, window, spike_thresh, spike_window, handle_missing = (
+        _resolve_detector_settings(report)
+    )
 
     group_col = report.metadata.get("group_col")
     if group_col is None or group_col not in df.columns:
         return _affected_cells_single(
-            report.all_issues, df, z_thresh, window, spike_thresh
+            report.all_issues,
+            df,
+            z_thresh,
+            window,
+            spike_thresh,
+            spike_window,
+            handle_missing,
         )
 
     total = 0
@@ -730,7 +965,9 @@ def affected_cells(report, df: pd.DataFrame) -> int:
             continue
         sub = df[groups == key]
         issues = [i for i in report.all_issues if i.group == str(key)]
-        total += _affected_cells_single(issues, sub, z_thresh, window, spike_thresh)
+        total += _affected_cells_single(
+            issues, sub, z_thresh, window, spike_thresh, spike_window, handle_missing
+        )
     return total
 
 

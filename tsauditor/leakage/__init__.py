@@ -27,7 +27,10 @@ LEK005  Combination leakage: a small group of features jointly reconstructs the
         target even though no individual feature does.
 """
 
-from tsauditor.leakage.correlation import audit_correlation_leakage
+from tsauditor.leakage.correlation import (
+    audit_correlation_leakage,
+    lag_correlation_matrix,
+)
 from tsauditor.leakage.equivalence import audit_equivalence
 from tsauditor.leakage.temporal import audit_temporal_leakage
 from tsauditor.leakage.asof import audit_asof_leakage
@@ -35,6 +38,7 @@ from tsauditor.leakage.combination import audit_combination_leakage
 
 __all__ = [
     "audit_correlation_leakage",
+    "lag_correlation_matrix",
     "audit_equivalence",
     "audit_temporal_leakage",
     "audit_asof_leakage",

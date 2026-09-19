@@ -17,7 +17,7 @@ def audit_stationarity(
     Validates DatetimeIndex and handles NaN/Infinite values.
 
     ``max_lag`` caps the ADF lag search. By default (None) statsmodels chooses
-    the maximum lag and searches all of them via AIC — the bulk of scan()'s
+    the maximum lag and searches all of them via AIC: the bulk of scan()'s
     runtime. Passing a small cap (e.g. 4) sharply reduces the number of OLS fits
     at a slight cost in test precision.
     """

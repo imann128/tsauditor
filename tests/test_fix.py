@@ -110,6 +110,96 @@ def test_clip_pulls_in_the_outlier():
     assert out["price"].max() < 100  # no extreme value remains
 
 
+def _make_masked_df(seed=2, n=200, contam_frac=0.3, mag=4.5):
+    """
+    A column heavily contaminated enough that the z-score rule goes blind
+    (agreement_count == 0) but the IQR rule still catches most of it, and
+    ESD recovers a further subset neither rule alone flagged. seed=2 at
+    30% contamination / magnitude 4.5 is verified by direct simulation to
+    produce esd_recovered_count > 0 with no ANO003 co-occurrence (which
+    would clip additional, unrelated cells and make the assertions below
+    ambiguous about which detector caused which change).
+    """
+    rng = np.random.default_rng(seed)
+    values = rng.normal(0, 1, n)
+    n_contam = int(n * contam_frac)
+    idxs = rng.choice(n, n_contam, replace=False)
+    signs = rng.choice([-1, 1], n_contam)
+    values[idxs] = signs * mag + rng.normal(0, 0.3, n_contam)
+    idx = pd.date_range("2020-01-01", periods=n, freq="D")
+    return pd.DataFrame({"x": values}, index=idx)
+
+
+def test_clip_naans_esd_recovered_points_instead_of_inventing_a_bound():
+    """
+    Regression for the ESD-masking clip fix. Before it, apply_fixes(
+    outliers="clip") only reached the z-band/IQR-fence-flagged points on a
+    masked column -- the points ESD alone recovered (esd_recovered_count in
+    ANO002's evidence) were, by construction, already inside the ordinary
+    clip bounds, so the whole-column clip left them completely untouched
+    even though scan() had flagged them. An earlier fix attempt clipped
+    them to a data-derived "ESD-consistent band"; adversarial simulation
+    (sweeping contamination/magnitude across 59 seeds) found that band is
+    not actually guaranteed to be outside every point ESD flags (Rosner's
+    test is a sequential procedure, not a per-point threshold test -- see
+    _generalized_esd's docstring), so it left some flagged points unchanged
+    on ~2.5% of masking-suspected cases. The fix that survived verification
+    NaNs the ESD-recovered rows instead and lets `missing` imputation fill
+    them, which is unconditionally correct: NaN always changes the cell.
+    """
+    df = _make_masked_df()
+    report = GuardReport(warnings=audit_point_anomalies(df), metadata={"domain": None})
+    ev = next(i for i in report.all_issues if i.code == "ANO002").evidence
+    assert ev["masking_suspected"] is True
+    assert ev["esd_recovered_count"] > 0, "fixture must exercise the recovered-points path"
+
+    from tsauditor.anomaly._common import zscore_iqr_masks, zscore_preset, esd_masking_recovery
+
+    series = df["x"]
+    z_mask, iqr_mask, _, _ = zscore_iqr_masks(series, zscore_preset(None))
+    recovery = esd_masking_recovery(series, z_mask, iqr_mask)
+    combined_before = (z_mask | iqr_mask).to_numpy()
+    recovered_only = [p for p in recovery.esd_positions if not combined_before[p]]
+    assert len(recovered_only) == ev["esd_recovered_count"]
+
+    # missing=None so a NaN survives to be checked directly, rather than
+    # being interpolated away.
+    out = report.apply_fixes(df, outliers="clip", missing=None, stuck=None)
+
+    # Every recovered-only row became NaN -- not clipped to some invented
+    # numeric bound, and not silently left untouched.
+    assert out["x"].iloc[recovered_only].isna().all()
+
+    # The z-band/IQR-fence-flagged points are still literally winsorized
+    # (never NaN), and every other row is untouched.
+    ordinary_flagged = np.where(combined_before)[0]
+    assert not out["x"].iloc[ordinary_flagged].isna().any()
+    unflagged = [
+        p for p in range(len(series))
+        if p not in set(recovery.esd_positions) and not combined_before[p]
+    ]
+    pd.testing.assert_series_equal(
+        out["x"].iloc[unflagged], series.iloc[unflagged], check_names=False
+    )
+
+
+def test_clip_then_impute_leaves_no_nans_on_esd_recovered_points():
+    """
+    With the default missing="interpolate", the NaNs _esd_masking_repair
+    introduces for ESD-recovered points must actually get filled -- the
+    imputation step runs over nan_filled_cols, and this pins that the
+    "clip" branch adds the column to that set when it NaNs these rows,
+    not just when the ordinary "nan"/"drop" branch does.
+    """
+    df = _make_masked_df()
+    report = GuardReport(warnings=audit_point_anomalies(df), metadata={"domain": None})
+    ev = next(i for i in report.all_issues if i.code == "ANO002").evidence
+    assert ev["esd_recovered_count"] > 0
+
+    out = report.apply_fixes(df, outliers="clip", missing="interpolate", stuck=None)
+    assert not out["x"].isna().any()
+
+
 def test_drop_is_an_alias_for_nan_and_never_deletes_rows():
     df = _make_df()
     report = _report(df)
@@ -517,3 +607,82 @@ def test_spike_nan_count_matches_detector_evidence():
     ).evidence["n_spikes"]
     out = report.apply_fixes(df, outliers="nan", missing=None, stuck=None)
     assert int(out["regime"].isna().sum()) == n_spikes
+
+
+# ── metadata/threshold-drift (full-sweep finding) ──────────────────────────
+#
+# scan() accepts explicit zscore_threshold / stuck_window / spike_threshold /
+# spike_window / handle_missing overrides and correctly used them for
+# *detection*. But it never recorded them in report.metadata, so every
+# downstream re-scan (apply_fixes/affected_cells's internal detector calls,
+# GuardReport.health_score(), to_json()/to_pdf()'s "after" re-scan) fell back
+# to the domain-only preset instead of the caller's actual override -- a
+# report and a repair that silently disagreed about what "anomalous" meant.
+
+
+def test_stuck_window_override_is_forwarded_to_apply_fixes():
+    """
+    Regression. scan(df, stuck_window=2) must make apply_fixes' internal
+    stuck-run detection use window=2 as well. Before the fix, metadata
+    never carried stuck_window, so apply_fixes fell back to
+    stuck_window_preset(domain) == 5 (no domain given) and silently failed
+    to repair a run scan() itself had just flagged with the smaller window.
+    """
+    import tsauditor as tsa
+
+    dates = pd.date_range("2024-01-01", periods=100, freq="D")
+    rng = np.random.default_rng(0)
+    vals = rng.normal(0, 1, 100)
+    vals[40:43] = 7.0  # a 3-point stuck run: flagged at window=2, not at the
+    # domain-default window=5
+    df = pd.DataFrame({"x": vals}, index=dates)
+
+    report = tsa.scan(df, stuck_window=2, run_leakage=False, run_stationarity=False)
+    assert any(
+        i.code == "ANO001" and i.column == "x" for i in report.all_issues
+    ), "scan() itself must flag the run at the smaller window"
+
+    fixed = report.apply_fixes(df, outliers=None, missing=None, stuck="nan")
+    assert fixed["x"].iloc[40:43].isna().all(), (
+        "apply_fixes must repair the same run scan() flagged, using the "
+        "caller's stuck_window override -- not silently fall back to the "
+        "domain-preset window and leave it untouched"
+    )
+
+
+def test_zscore_threshold_override_is_forwarded_to_health_score():
+    """
+    Regression. scan(df, zscore_threshold=...) must make health_score()'s
+    internal re-scan use the same threshold. Before the fix, a strict
+    caller-supplied threshold that flagged extra point anomalies was
+    silently ignored by health_score(), which re-derived its own "before"
+    picture using the domain-preset threshold instead -- so the score
+    didn't reflect what the report actually said was wrong.
+    """
+    import tsauditor as tsa
+
+    dates = pd.date_range("2024-01-01", periods=300, freq="D")
+    rng = np.random.default_rng(3)
+    vals = rng.normal(0, 1, 300)
+    # A cluster of moderate (~2.6 sigma) points: below the default z-score
+    # preset (4.0), so only IQR flags a handful of them; a strict override
+    # (2.0) flags many more via z-score alone.
+    vals[[50, 150]] = 2.6
+    df = pd.DataFrame({"x": vals}, index=dates)
+
+    loose = tsa.scan(df, run_leakage=False, run_stationarity=False)
+    strict = tsa.scan(df, zscore_threshold=2.0, run_leakage=False, run_stationarity=False)
+
+    z_loose = next(i for i in loose.all_issues if i.code == "ANO002").evidence[
+        "zscore_outlier_count"
+    ]
+    z_strict = next(i for i in strict.all_issues if i.code == "ANO002").evidence[
+        "zscore_outlier_count"
+    ]
+    assert z_strict > z_loose, "the strict threshold must actually catch more"
+
+    # health_score()'s own re-scan must see the same (strict) picture the
+    # report was built from, not silently relax back to the preset. Both
+    # calls re-scan the *same* df; only the metadata each report carries
+    # (and therefore the threshold used) should differ.
+    assert strict.health_score(df) < loose.health_score(df)

@@ -138,6 +138,7 @@ Conversely, the IQR rule is fixed at 1.5× and cannot be tuned by domain, and on
 | `agreement_count` | Points flagged by **both** rules. High confidence when non-zero, but see the warning below before reading a **zero** as reassurance. |
 | `esd_outlier_count` | Generalized ESD estimate of the true outlier count. **Computed only when `agreement_count` is ambiguous** (z-score 0, IQR above 0); `None` otherwise. |
 | `masking_suspected` | `True` when the z-score rule is blind but ESD finds substantial contamination. |
+| `esd_recovered_count` | **Since 0.6.0.** How many points ESD itself flagged that neither z-score nor IQR had already caught, and that got folded into what this column's ANO002 issue actually reports as anomalous. `0` unless `masking_suspected` is `True`. See below — this is a behavior change, not just a diagnostic. |
 | `max_zscore` | Largest \|z\| in the column |
 | `worst_value` | The value with that largest \|z\| |
 | `worst_timestamp` | When it occurred |
@@ -196,7 +197,11 @@ A high IQR count with a zero z-score count has **two possible causes, and they c
 
 The first two rows are indistinguishable from the counts alone. ESD separates them exactly.
 
-It is computed only for the ambiguous case and reported as `None` otherwise, since it is O(k·n): about 27ms on 1,000 points. **It never changes what gets flagged**; flagging remains the z-score OR IQR rule.
+It is computed only for the ambiguous case and reported as `None` otherwise, since it is O(k·n): about 27ms on 1,000 points.
+
+**Since 0.6.0, when `masking_suspected` is `True`, ESD's own flagged points are folded into what this column's issue reports as anomalous** (`evidence["esd_recovered_count"]` counts how many), not left as diagnostic-only. Before 0.6.0 this evidence was informational: ESD told you masking was likely, but flagging itself stayed z-score OR IQR, so a masked column's genuinely-outlying points could be named in `esd_outlier_count` yet never actually reported as anomalous, and never repaired by `apply_fixes()`/`fix()` either (see [Remediation](Remediation) for the repair-side half of this fix). If you are relying on `esd_outlier_count` alone to manually decide what to do about masking, note that as of 0.6.0 you usually don't have to: the points it names are now the same points the issue flags.
+
+**Known limitation, not yet fixed.** If IQR itself finds nothing (contamination heavy enough to defeat even Tukey's fence), there is no z/IQR mask for ESD's recovery step to extend, and the column is skipped with no ANO002 issue at all, however contaminated it actually is. This is a separate, harder case from ordinary z-score masking and is not addressed by the 0.6.0 fix.
 
 If you want to look yourself, or you are on an older version:
 

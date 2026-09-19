@@ -254,8 +254,10 @@ _KNOWN_EVIDENCE_KEYS = {
     "LEK003": {
         "lag",
         "observed_future_corr",
+        "expected_from_persistence",
         "excess_over_persistence",
         "excess_threshold",
+        "excess_scale",
         "metric",
     },
     "LEK004": {"n_violations", "max_lookahead_days", "first_violation", "check"},
@@ -296,6 +298,7 @@ _KNOWN_EVIDENCE_KEYS = {
         "expected_from_cs_persistence",
         "excess",
         "excess_threshold",
+        "excess_scale",
         "contemporaneous_cs_corr",
         "n_entities",
         "group_col",

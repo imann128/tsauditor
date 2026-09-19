@@ -241,7 +241,9 @@ panel["xs_rank"] = panel.groupby("ticker")["xs_rank"].shift(-1)        # LEAK
 
 Every row now carries tomorrow's cross-sectional rank.
 
-*Evidence:* `metric`, `lag`, `observed_cs_corr`, `expected_from_cs_persistence`, `excess`, `excess_threshold`, `contemporaneous_cs_corr`, `n_entities`, `group_col`
+Like LEK003, which it mirrors, `excess` (`observed_cs_corr` vs. `expected_from_cs_persistence`) is computed in Fisher-z space since 0.6.0 — `excess = arctanh(observed) − arctanh(expected)`, not a raw correlation-point difference. This matters for the same reason it matters for LEK003: raw correlation compresses near ±1, so at high cross-sectional persistence a fixed `excess_threshold` on the old raw-difference formula lost power exactly where equity-style panels tend to sit. See [LEK003](Detectors-Leakage#lek003-lookahead-beyond-persistence) for the full explanation and the verification methodology (identical fix, independently re-verified for the cross-sectional case).
+
+*Evidence:* `metric`, `lag`, `observed_cs_corr`, `expected_from_cs_persistence`, `excess` (Fisher-z units), `excess_threshold`, `excess_scale` (`"fisher_z"`), `contemporaneous_cs_corr`, `n_entities`, `group_col`
 
 #### Why the per-entity checks aren't enough
 
@@ -368,11 +370,24 @@ report = tsa.scan(panel, group_col="ticker", run_stationarity=False)
 
 Non-stationarity is a per-column modeling note rated INFO. Across 500 entities it produces 500× that note while contributing nothing to the health score. Run it once on a representative entity instead.
 
+### Parallelizing a panel scan (`n_jobs`)
+
+**Since 0.6.0**, `scan(df, group_col=..., n_jobs=...)` can parallelize the per-entity loop internally, via `joblib`:
+
+```python
+report = tsa.scan(panel, target="direction", group_col="ticker", n_jobs=-1)   # all cores
+report = tsa.scan(panel, target="direction", group_col="ticker", n_jobs=4)    # 4 workers
+```
+
+`n_jobs=1` (the default) preserves the original sequential behavior exactly, including issue ordering. Any other value requires the `[parallel]` extra (`pip install 'tsauditor[parallel]'`); without it, `n_jobs != 1` raises an actionable `ImportError` naming the extra, rather than a bare `ModuleNotFoundError` from deep inside `joblib`'s absence. See [Installation](Installation#optional-extras) for the extra itself.
+
+Whether parallelizing is worth it depends on entity count and size: with many small groups, per-task dispatch overhead can eat into or erase the win, so benchmark on your own data's shape before assuming a speedup. This does not change what any check finds, only how long the per-entity loop takes to run; the dataset-level checks (`audit_panel_structure`, PNL002) still run once over the whole panel, not per entity, so they are unaffected by `n_jobs`.
+
 ---
 
 ## Limitations
 
-**No parallelism.** Entities are scanned sequentially.
+**Parallelism is opt-in and per-entity only.** By default (`n_jobs=1`) entities are scanned sequentially; see `n_jobs` above to parallelize the per-entity loop. The dataset-level checks (panel structure, PNL002) are not parallelized, since they operate once over the whole panel rather than per entity.
 
 **Nested grouping is unsupported.** `group_col` takes a single column. For a two-level entity key, combine them first:
 

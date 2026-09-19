@@ -5,7 +5,7 @@ Domain validity checks: values that are structurally impossible or out of a
 declared range.
 
 Where the anomaly module finds points that are *statistically* surprising, this
-module finds points that are *definitionally* wrong — a negative traded volume,
+module finds points that are *definitionally* wrong: a negative traded volume,
 a sentiment score outside [-1, 1], a bid-ask spread of zero or below, or a
 crossed order book where the bid exceeds the ask. tsauditor cannot guess these
 rules (it does not know a column named "sentiment" is bounded), so the caller
@@ -13,10 +13,10 @@ declares them and this check verifies the data obeys them.
 
 Two kinds of rule:
 
-- **bounds** — per-column lower/upper limits (inclusive by default; set
+- **bounds**: per-column lower/upper limits (inclusive by default; set
   ``min_exclusive`` / ``max_exclusive`` for strict bounds). Example: a spread
   must be strictly positive → ``{"spread": {"min": 0, "min_exclusive": True}}``.
-- **relations** — ordered ``(low, high)`` column pairs that must satisfy
+- **relations**: ordered ``(low, high)`` column pairs that must satisfy
   ``low <= high`` on every row. Example: ``("bid", "ask")`` catches a crossed
   book.
 
@@ -135,7 +135,7 @@ def audit_validity(
                 severity=CRITICAL,
                 description=(
                     f"Ordering constraint '{low} <= {high}' is violated on {n} row(s) "
-                    f"(first at {first}) — e.g. a crossed book where '{low}' exceeds "
+                    f"(first at {first}), e.g. a crossed book where '{low}' exceeds "
                     f"'{high}'. Inspect these timestamps for feed glitches."
                 ),
                 column=high,

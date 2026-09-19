@@ -218,3 +218,111 @@ def test_to_pdf_panel_uses_prevalence_not_raw_issue_dump(tmp_path):
     # 40+ rows; the prevalence view collapses to a handful of (code, column)
     # rows and must fit in very few pages.
     assert len(reader.pages) <= 3
+
+
+# ── Lead/lag correlation heatmap ────────────────────────────────────────────
+
+
+def _leaky_scan_and_df():
+    import tsauditor as tsa
+
+    n = 250
+    dates = pd.date_range("2020-01-01", periods=n, freq="B")
+    rng = np.random.default_rng(1)
+    t = pd.Series(rng.normal(0, 1, n), index=dates)
+    df = pd.DataFrame(
+        {"target": t, "leak": t.shift(-1), "quiet": rng.normal(0, 1, n)},
+        index=dates,
+    ).bfill()
+    report = tsa.scan(df, target="target", run_stationarity=False)
+    return df, report
+
+
+def test_heatmap_renders_for_a_targeted_scan(tmp_path):
+    df, report = _leaky_scan_and_df()
+    out = tmp_path / "heatmap.pdf"
+    report.to_pdf(str(out), df=df)
+
+    text = _pdf_text(out)
+    assert "Lead/Lag Cross-Correlation Heatmap" in text
+
+
+def test_heatmap_omitted_without_target(tmp_path):
+    """to_pdf's existing no-target/no-df tests already cover 'no charts'
+    generally; this pins that the heatmap specifically stays off when there
+    is no target to correlate against, even though df is provided."""
+    df, rep = _df_and_report()  # metadata target is None
+    out = tmp_path / "no_target.pdf"
+    rep.to_pdf(str(out), df=df)
+
+    text = _pdf_text(out)
+    assert "Lead/Lag Cross-Correlation Heatmap" not in text
+
+
+def test_heatmap_can_be_disabled(tmp_path):
+    df, report = _leaky_scan_and_df()
+    out = tmp_path / "no_heatmap.pdf"
+    report.to_pdf(str(out), df=df, include_correlation_heatmap=False)
+
+    text = _pdf_text(out)
+    assert "Lead/Lag Cross-Correlation Heatmap" not in text
+
+
+def test_heatmap_omitted_for_panel_scans_with_explanatory_note(tmp_path):
+    """
+    Panel scans get a one-line note instead of a heatmap page. Silently
+    rendering nothing would look identical to a bug that ate the section;
+    silently rendering a pooled-across-entities heatmap would misrepresent
+    per-entity structure. The explicit note is the honest middle ground.
+    """
+    panel, report = _panel_report()
+    out = tmp_path / "panel_heatmap.pdf"
+    report.to_pdf(str(out), df=panel)
+
+    text = _pdf_text(out)
+    assert "Lead/Lag Cross-Correlation Heatmap" not in text
+    assert "not yet available for panel" in text
+
+
+def test_heatmap_skips_gracefully_when_target_missing_from_df(tmp_path):
+    """
+    report.metadata['target'] can name a column that isn't in the df passed
+    to to_pdf (e.g. a caller passes a differently-shaped frame). The rest of
+    the report must still render -- a bonus page failing must not take down
+    the whole export.
+    """
+    df, report = _leaky_scan_and_df()
+    mismatched = df.drop(columns=["target"])
+    out = tmp_path / "mismatched.pdf"
+    report.to_pdf(str(out), df=mismatched)  # must not raise
+
+    assert out.read_bytes()[:4] == b"%PDF"
+    text = _pdf_text(out)
+    assert "Lead/Lag Cross-Correlation Heatmap" not in text
+
+
+def test_heatmap_truncation_is_stated_and_ranked_by_peak_correlation(tmp_path):
+    """
+    With more numeric features than heatmap_top_n, the shown set must be the
+    top-N by peak |correlation| (so the injected leak is never silently
+    dropped by truncation) and the PDF must say it truncated, not just quietly
+    drop columns.
+    """
+    import tsauditor as tsa
+
+    n = 250
+    dates = pd.date_range("2020-01-01", periods=n, freq="B")
+    rng = np.random.default_rng(2)
+    t = pd.Series(rng.normal(0, 1, n), index=dates)
+    data = {"target": t}
+    for i in range(20):
+        data[f"f{i}"] = rng.normal(0, 1, n)
+    data["leak"] = t.shift(-1)  # strongest possible peak correlation: 1.0
+    df = pd.DataFrame(data, index=dates).bfill()
+
+    report = tsa.scan(df, target="target", run_stationarity=False)
+    out = tmp_path / "truncated.pdf"
+    report.to_pdf(str(out), df=df, heatmap_top_n=5)
+
+    text = _pdf_text(out)
+    assert "Showing top 5 of 21 features by peak |correlation|" in text

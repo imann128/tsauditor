@@ -25,6 +25,7 @@ import pandas as pd
 
 import numpy as np
 
+from tsauditor.leakage.temporal import _fisher_z
 from tsauditor.report.summary import Issue, WARNING, INFO
 
 # Below this many rows an entity cannot support the library's own minimums:
@@ -70,7 +71,7 @@ def audit_panel_structure(
 
     # ── PNL004: rows with no entity id ───────────────────────────────────────
     # groupby(group_col) drops null keys by default (pandas' default
-    # dropna=True), which is the only sound choice for the checks below — there
+    # dropna=True), which is the only sound choice for the checks below: there
     # is no entity identity to compare coverage or short-history against. But
     # that means these rows silently receive *no* auditing at all: they are
     # excluded here, and scanner.py's per-entity loop (which drives from the
@@ -88,7 +89,7 @@ def audit_panel_structure(
                     f"{n_null} of {len(df)} rows have a null value in the entity "
                     f"column '{group_col}'. These rows cannot be assigned to any "
                     f"entity, so they are excluded from every panel check and "
-                    f"every per-entity check (leakage, anomaly, profiler) — not "
+                    f"every per-entity check (leakage, anomaly, profiler): not "
                     f"flagged clean, simply never examined. They are also left "
                     f"unmodified by apply_fixes(), since there is no single "
                     f"entity's distribution to repair them from."
@@ -110,7 +111,17 @@ def audit_panel_structure(
         # to say about it.
         return issues
 
-    all_timestamps = df.index.unique()
+    # Restricted to the same non-null rows PNL004 above already computed --
+    # not df.index.unique() over the raw, unfiltered frame. A null-entity
+    # row (see PNL004) belongs to no entity and is never scanned per-entity,
+    # so a timestamp that exists *only* on such a row is not a timestamp any
+    # entity could ever have coverage for. Left unfiltered, it inflated
+    # n_all and therefore every entity's shortfall below -- a panel where
+    # every real entity has complete, identical coverage got reported as
+    # fully ragged (n_complete_groups=0) the moment any null-entity rows
+    # existed at timestamps outside the real entities' own range, even
+    # though none of those entities' actual data had changed at all.
+    all_timestamps = df.loc[~null_mask].index.unique()
     n_all = len(all_timestamps)
 
     # ── PNL001: ragged coverage ──────────────────────────────────────────────
@@ -252,8 +263,8 @@ def audit_cross_sectional_leakage(
     """
     Detect cross-sectional lookahead (PNL002).
 
-    A cross-sectional feature — a rank, z-score, decile or sector-neutralised
-    value computed *across entities at one timestamp* — is legitimate when built
+    A cross-sectional feature (a rank, z-score, decile or sector-neutralised
+    value computed *across entities at one timestamp*) is legitimate when built
     from the cross-section at time t. Computed from the cross-section at t+1 and
     joined back to t, it is a leak.
 
@@ -285,7 +296,20 @@ def audit_cross_sectional_leakage(
     applied, in cross-sectional form::
 
         expected(k) = | observed(0) | * | cs_autocorr(y, k) |
-        excess(k)   = observed(k) - expected(k)
+        excess(k)   = arctanh(| observed(k) |) - arctanh(expected(k))
+
+    As with LEK003, the comparison is done in Fisher-z (``arctanh``) space
+    rather than on the raw, bounded-in-[-1,1] correlations: at high
+    cross-sectional persistence both ``observed(k)`` and ``expected(k)`` sit
+    near the same ceiling, and a raw difference collapses to ~0 even for an
+    exact cross-sectional lookahead (verified by simulation: an AR(1)
+    cross-sectional persistence sweep reproduced LEK003's own collapse
+    pattern -- 100% detection through phi=0.9, 0% from phi=0.95 -- under the
+    old raw-difference formula, restored to 100% at every phi tested by the
+    z-transform). See ``leakage.temporal``'s "Why the comparison happens in
+    Fisher-z space" for the full derivation; this check reuses that module's
+    ``_fisher_z`` rather than reimplementing it, so the two cannot drift
+    apart.
 
     Flagged when ``excess(k) >= excess_threshold`` and
     ``observed(k) >= min_correlation`` for some k in 1..max_lag.
@@ -301,7 +325,7 @@ def audit_cross_sectional_leakage(
     max_lag : int
         Forward lags to test. Default 3.
     excess_threshold : float
-        How far above the persistence baseline counts as leakage. Default 0.15 —
+        How far above the persistence baseline counts as leakage. Default 0.15:
         deliberately stricter than LEK003's 0.1, because a real cross-sectional
         alpha factor legitimately carries some forward signal.
     min_correlation : float
@@ -321,7 +345,7 @@ def audit_cross_sectional_leakage(
 
     Notes
     -----
-    This is a *suspicion* flag, not proof — exactly like LEK002/LEK003. A
+    This is a *suspicion* flag, not proof, exactly like LEK002/LEK003. A
     genuinely predictive cross-sectional factor produces the same signature as a
     leak, separated only by magnitude. Read ``excess`` before acting.
     """
@@ -335,7 +359,20 @@ def audit_cross_sectional_leakage(
     if df.empty:
         return issues
 
-    frame = df.copy()
+    # PNL004's contract (see audit_panel_structure) is that a null entity id
+    # gets no checks at all -- there is no entity identity to correlate
+    # against. Dropping these rows *before* the str-cast below is required,
+    # not cosmetic: on pandas < 3 (this package's declared support range,
+    # pyproject.toml pins pandas>=1.5,<3), `.astype(str)` turns NaN into the
+    # literal string "nan", a real, non-null groupby key -- every null-id row
+    # would silently merge into one phantom "nan" entity that then
+    # participates fully in the cross-sectional correlation below. That
+    # directly contradicts PNL004's "excluded from every panel check... never
+    # examined" guarantee, and audit_panel_structure/apply_fixes already
+    # exclude these rows the same way for the same reason.
+    frame = df[df[group_col].notna()].copy()
+    if frame.empty:
+        return issues
     frame[group_col] = frame[group_col].astype(str)
 
     numeric = frame.select_dtypes(include=["number"]).replace([np.inf, -np.inf], np.nan)
@@ -394,7 +431,22 @@ def audit_cross_sectional_leakage(
             if observed is None:
                 continue
             expected = abs(contemporaneous) * abs(persistence[k])
-            excess = abs(observed) - expected
+            # Fisher-z difference, not a raw subtraction -- see LEK003
+            # (leakage/temporal.py, "Why the comparison happens in Fisher-z
+            # space"). observed and expected are both bounded in [-1, 1] and
+            # compress near +/-1, so once a panel's cross-sectional
+            # persistence is high, a raw `abs(observed) - expected`
+            # collapses toward 0 even for a feature that is an exact
+            # cross-sectional lookahead -- the same collapse LEK003 had
+            # before this fix, reproduced here by direct simulation (AR(1)
+            # cross-sectional persistence phi: 100% detection through
+            # phi=0.9, 0% from phi=0.95 through phi=1.0, with the raw-
+            # difference formula). arctanh keeps `excess_threshold` meaning
+            # approximately the same amount of "real" excess dependence
+            # regardless of persistence, and is nearly the identity at the
+            # small-to-moderate correlations this check ordinarily deals
+            # with, so the existing default (0.15) needed no change.
+            excess = _fisher_z(abs(observed)) - _fisher_z(expected)
             if best is None or excess > best[0]:
                 best = (excess, k, observed, expected)
 
@@ -411,7 +463,7 @@ def audit_cross_sectional_leakage(
                     description=(
                         f"Feature '{col}' ranks entities in the order their future "
                         f"target values will fall, at lag +{lag} (cross-sectional "
-                        f"Spearman={observed:.3f}) — more strongly than the target's "
+                        f"Spearman={observed:.3f}), more strongly than the target's "
                         f"own cross-sectional persistence explains (excess="
                         f"{excess:.3f}). This is the signature of a cross-sectional "
                         f"feature computed from a later timestamp and joined back. "
@@ -424,8 +476,14 @@ def audit_cross_sectional_leakage(
                         "lag": int(lag),
                         "observed_cs_corr": round(float(observed), 4),
                         "expected_from_cs_persistence": round(float(expected), 4),
+                        # Fisher-z scale (arctanh difference), not a raw
+                        # correlation-point difference -- see the excess
+                        # computation above and LEK003's own evidence, which
+                        # uses the same "excess_scale" key for the same
+                        # reason.
                         "excess": round(float(excess), 4),
                         "excess_threshold": excess_threshold,
+                        "excess_scale": "fisher_z",
                         "contemporaneous_cs_corr": round(float(contemporaneous), 4),
                         "n_entities": int(target_wide.shape[1]),
                         "group_col": group_col,

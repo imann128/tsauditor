@@ -92,6 +92,8 @@ An invalid value raises `ValueError` immediately, before anything is modified.
 
 Two naming quirks to be aware of. `"drop"` for outliers is an **alias for `"nan"`**: it does not drop anything, because rows are never deleted. And `outliers=` controls contextual spikes (ANO003) as well as point outliers (ANO002), despite the name.
 
+**Since 0.6.0, `outliers="clip"` has one exception.** A point ANO002 flagged only because ESD detected z-score masking (see [Detectors: Anomaly](Detectors-Anomaly#reading-a-zero-agreement_count)) sits *inside* the ordinary z-score/IQR band by construction — that is the entire reason those two rules missed it — so there is no clip target for it. Those specific points are NaN-ed and left to the `missing` imputation step instead, exactly like `"nan"`/`"drop"` mode would treat them, while every other flagged point on the same column is still clipped normally. An earlier internal version of this repair tried inventing a "band ESD used to judge the point" and clipping to that instead; it was found, by adversarial simulation, to sometimes leave the point's value completely unchanged (about 2.5% of masking-suspected cases), because no such band is guaranteed to exist for Rosner's test in general. NaN has no such gap.
+
 ### Execution order
 
 The order is not arbitrary: steps 2 and 3 feed step 4.
@@ -137,7 +139,7 @@ for entry in report.last_fixes:
 {'column': 'price', 'action': 'impute_interpolate', 'cells_changed': 27}
 ```
 
-Possible `action` values: `drop_column`, `clip_outliers`, `outliers_to_nan`, `clip_spikes`, `spikes_to_nan`, `stuck_to_nan`, `non_finite_to_nan`, `impute_ffill`, `impute_bfill`, `impute_interpolate`. On a panel scan, `skip_null_group_rows` also appears when rows with a null `group_col` value were left untouched (see [Panel Data](Panel-Data)).
+Possible `action` values: `drop_column`, `clip_outliers`, `outliers_to_nan`, `clip_spikes`, `spikes_to_nan`, `stuck_to_nan`, `non_finite_to_nan`, `impute_ffill`, `impute_bfill`, `impute_interpolate`. **Since 0.6.0**, `esd_masked_outliers_to_nan` also appears alongside `clip_outliers` when `outliers="clip"` and ESD-recovered points existed on that column (see the note above); its `cells_changed` counts only the newly-NaN'd cells, separate from whatever `clip_outliers` already changed. On a panel scan, `skip_null_group_rows` also appears when rows with a null `group_col` value were left untouched (see [Panel Data](Panel-Data)).
 
 `last_fixes` is overwritten on each call, not appended to.
 
@@ -152,6 +154,8 @@ clean, report = tsa.fix(df, target="Direction", domain="finance")
 Exactly equivalent to `scan()` followed by `apply_fixes()`. It always returns **both** values, so the audit trail cannot be silently discarded; you keep the record of what changed and why.
 
 `missing`, `outliers`, `stuck`, `leakage`, and `verbose` pass straight through. `fix()` also accepts `available_at=`, `constraints=`, and `group_col=`, forwarding all three to the underlying `scan()` call, so LEK004 (as-of leakage), VAL001/VAL002 (validity), and panel repair can all run as part of a one-shot call, not just through a separate `scan()` + `apply_fixes()` call.
+
+**Since 0.6.0**, `fix()` also accepts `zscore_threshold=`, `stuck_window=`, `spike_threshold=`, `spike_window=`, and `handle_missing=`, forwarded to `scan()` the same way. Before this, tuning detection meant calling `scan()` and `apply_fixes()`/`fix()` separately: `fix()` had no way to pass these through at all, so a one-shot call was stuck with the domain's own thresholds. `apply_fixes()` itself takes no separate argument for these, whether called directly or through `fix()`: like `group_col`, it reads them back off `report.metadata`, which `scan()` now records regardless of which entry point set them. See "Interaction with domain presets" below for why this also fixed a real bug, not just added convenience.
 
 ```python
 clean, report = tsa.fix(
@@ -304,7 +308,7 @@ This repairs only the failures that are unambiguous (frozen sensors and gaps) an
 
 ## Interaction with domain presets
 
-`apply_fixes` resolves its thresholds from `report.metadata["domain"]`, so the domain you scanned with automatically governs repair:
+`apply_fixes` resolves its thresholds from `report.metadata`, so the domain you scanned with automatically governs repair when you didn't explicitly override anything:
 
 | `domain` | z-score | stuck window | spike threshold |
 | -------- | ------- | ------------ | --------------- |
@@ -313,6 +317,8 @@ This repairs only the failures that are unambiguous (frozen sensors and gaps) an
 | `None` | 4.0 | 5 | 3.5 |
 
 **These are not duplicated anymore.** Earlier versions of `apply_fixes` kept its own hand-copied version of every detector threshold and masking formula, connected to the real detectors (`anomaly/point.py`, `anomaly/contextual.py`) only by a comment. That drifted out of sync in practice once (a single-row-gap fix landed in the stuck-run detector without a matching update to the repair side, so `scan()` flagged a run that `apply_fixes` then silently failed to touch). Every threshold preset and masking formula above now lives in one place, `tsauditor/anomaly/_common.py`, imported by both the detectors and `apply_fixes`. There is no second copy left to drift; `tests/test_fix.py::test_detector_and_repair_share_the_same_threshold_and_mask_functions` asserts this by identity (the detector and repair modules resolve to the *same function object*), not just by matching output.
+
+**Fixed in 0.6.0: an explicit override used to be silently dropped on the repair side.** If you called `scan(df, domain="finance", zscore_threshold=6.0)`, the *detectors* used your explicit `6.0`, but `apply_fixes`/`fix()`/`affected_cells` (and therefore `health_score`) had no way to know an override had been passed at all — `zscore_threshold`, `stuck_window`, `spike_threshold`, `spike_window`, and `handle_missing` were never recorded in `report.metadata`, so repair silently fell back to the `"finance"` domain default (5.0) regardless. This meant repair could run against a different mask than the one `scan()` actually used to flag issues, or a spike detector that didn't account for `handle_missing="interpolate"` bridging a gap the same way ANO003 itself did (see the `apply_fixes` execution-order note above about re-detecting from the pristine input — this bug was a variant of exactly that failure mode, on the *parameters* rather than the *data*). `scan()` now records all five in `report.metadata` regardless of entry point, and `apply_fixes`/`affected_cells` prefer an explicit (non-`None`) value there over the domain preset — the same "explicit value wins, `None` falls back to preset" precedence the detectors themselves already used. A report built from an older or hand-constructed `metadata` dict without these keys degrades gracefully to the previous domain-only behavior rather than raising.
 
 See [Domain Presets](Domain-Presets) for the full picture.
 

@@ -3,7 +3,7 @@ tsauditor.adapters
 ------------------
 Boundary adapters that turn an audited-and-repaired DataFrame into the exact
 input another library expects. Adapters live at the edge of tsauditor: they call
-the core audit/fix engine, then reshape the result — they never add heavy or
+the core audit/fix engine, then reshape the result. They never add heavy or
 model-specific dependencies to the library itself.
 
 Currently provided

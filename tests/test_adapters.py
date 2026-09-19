@@ -76,6 +76,21 @@ def test_too_short_raises():
         to_timesfm(df, "y", min_context=32)
 
 
+def test_context_len_smaller_than_min_context_still_raises():
+    """
+    Regression. min_context was checked against the pre-truncation series
+    length, not the array actually returned -- so a context_len smaller than
+    min_context silently returned an array shorter than the documented
+    floor ("the adapter raises below it") instead of raising. A long,
+    perfectly clean series (1000 points, well above min_context on its own)
+    with a small context_len must still raise, not truncate first and skip
+    the check.
+    """
+    df = pd.DataFrame({"y": np.linspace(1, 2, 1000)}, index=_idx(1000))
+    with pytest.raises(ValueError, match="minimum"):
+        to_timesfm(df, "y", context_len=10, min_context=32)
+
+
 def test_missing_column_raises():
     df = pd.DataFrame({"y": np.arange(50.0)}, index=_idx(50))
     with pytest.raises(KeyError):

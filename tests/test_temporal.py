@@ -63,6 +63,69 @@ def test_centered_rolling_caught():
     assert iss.code == "LEK003"
     assert iss.severity == WARNING
     assert iss.evidence["excess_over_persistence"] >= 0.1
+    assert iss.evidence["excess_scale"] == "fisher_z"
+
+
+# ── Fisher-z reformulation (persistence-collapse fix) ──────────────────────────
+#
+# expected(k) = |r0| * |persistence(k)| and excess(k) = |observed(k)| -
+# expected(k) used to be computed as a raw correlation-point difference.
+# Correlation is bounded in [-1, 1] and compresses near the endpoints, so
+# as the target's own persistence approaches 1 (an undifferenced price
+# level -- this library's stated finance use case -- is close to a random
+# walk), both an honest feature's and a leaky feature's observed(k) get
+# pinned near the same ceiling as expected(k), and the raw subtraction
+# loses almost all resolving power between them. Confirmed by direct
+# simulation before fixing: 100% detection of an obvious centered-window
+# leak through phi=0.9, then 13% at phi=0.95, 0% from phi=0.97 through a
+# literal random walk. Fixed by comparing Fisher-z transforms
+# (arctanh(observed) - arctanh(expected)) instead of raw correlations --
+# arctanh stretches the space back out near +/-1 while being close to the
+# identity for small-to-moderate correlations, so ordinary (non-extreme)
+# persistence is unaffected: every pre-existing test in this file still
+# passes with its original excess_threshold=0.1 default unchanged.
+
+
+@pytest.mark.parametrize("phi", [0.7, 0.9, 0.95, 0.99, 1.0])
+def test_centered_rolling_caught_across_persistence_levels(phi):
+    """
+    The core regression for the reformulation. Same construction as
+    test_centered_rolling_caught, swept across persistence levels that
+    span exactly where the raw-difference formula collapsed (verified
+    against this exact seed/construction before the fix: raw excess was
+    0.032, under the 0.1 threshold, at phi=1.0 -- an obvious leak that went
+    completely undetected). Every level here must still be caught.
+    """
+    t = _ar1(600, phi=phi, seed=9)
+    df = pd.DataFrame(
+        {"target": t, "centered": t.rolling(5, center=True).mean()}, index=_idx(600)
+    )
+    issues = audit_temporal_leakage(df, target="target")
+    flagged = {i.column for i in issues}
+    assert "centered" in flagged, (
+        f"an obvious centered-window leak went undetected at phi={phi} -- "
+        f"the excess formula is likely back to a raw correlation "
+        f"difference instead of a Fisher-z (arctanh) difference"
+    )
+
+
+def test_honest_trailing_feature_not_flagged_near_random_walk():
+    """
+    False-positive guard for the same reformulation. A ratio-based
+    alternative (excess = (observed - expected) / (1 - expected)) was
+    tried and rejected before landing on Fisher-z: it also restored
+    recall, but its denominator approaches zero as persistence approaches
+    1, which amplifies ordinary Spearman sampling noise on an honest
+    feature into a false positive -- measured 12-30% false-positive rate
+    on this exact kind of trailing feature at phi >= 0.95 across a
+    60-trial sweep, versus 0% for the Fisher-z transform at matching
+    recall. This pins that the shipped fix does not have that failure
+    mode, on a target close enough to a literal random walk (phi=1.0) to
+    expose it if it did.
+    """
+    t = _ar1(600, phi=1.0, seed=109)
+    df = pd.DataFrame({"target": t, "trailing": t.rolling(5).mean()}, index=_idx(600))
+    assert audit_temporal_leakage(df, target="target") == []
 
 
 def test_future_target_leak_caught():

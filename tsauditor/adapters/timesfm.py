@@ -4,7 +4,7 @@ tsauditor.adapters.timesfm
 Format an audited, repaired series into the numpy array Google TimesFM expects.
 
 TimesFM (and similar zero-shot forecasters) tokenize a clean, contiguous, finite
-numeric context window. Real-world series rarely arrive that way — gaps, outliers
+numeric context window. Real-world series rarely arrive that way: gaps, outliers
 and stuck runs make tokenization fail. This adapter runs the tsauditor audit/fix
 engine first, then hands back a plain ``float32`` array, so the messy-data step
 and the model step are cleanly separated.
@@ -27,7 +27,7 @@ Design notes
 
 Context length: TimesFM 2.5 accepts a wide range of context lengths (up to 16k)
 and does not require a frequency indicator. ``context_len`` and ``min_context``
-below are *your* knobs, not TimesFM constants — set them for your use case and
+below are *your* knobs, not TimesFM constants. Set them for your use case and
 the model version you target.
 """
 
@@ -62,10 +62,10 @@ def to_timesfm(
     context_len : int
         Maximum number of trailing points to keep. Longer series are truncated to
         the most recent ``context_len``. Default 1024 (conservative; TimesFM 2.5
-        supports far longer contexts — raise it if you want more history).
+        supports far longer contexts, raise it if you want more history).
     min_context : int
         Your minimum acceptable length; the adapter raises below it. Default 32.
-        This is a caller-set guard, not a TimesFM requirement — verify what your
+        This is a caller-set guard, not a TimesFM requirement. Verify what your
         target model version actually needs.
     return_report : bool
         If True, return ``(array, report)`` so the audit trail is not discarded.
@@ -126,13 +126,20 @@ def to_timesfm(
             f"report.last_fixes shows what was repaired."
         )
 
+    if len(values) > context_len:
+        values = values[-context_len:]  # keep the most recent context window
+
+    # Checked *after* the context_len truncation, not before: min_context is
+    # documented as a guarantee about the array actually returned ("the
+    # adapter raises below it"). Checking against the pre-truncation length
+    # let a caller-supplied context_len smaller than min_context silently
+    # return an array shorter than the documented floor instead of raising,
+    # e.g. to_timesfm(df, col, context_len=10, min_context=32) returned 10
+    # points with no error.
     if len(values) < min_context:
         raise ValueError(
             f"Series has {len(values)} points, fewer than the required minimum "
             f"({min_context}). Lower min_context or supply more history."
         )
-
-    if len(values) > context_len:
-        values = values[-context_len:]  # keep the most recent context window
 
     return (values, report) if return_report else values

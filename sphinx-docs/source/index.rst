@@ -22,9 +22,13 @@ For a from-zero, runnable walkthrough of the whole scan -> read -> repair
 workflow, see :doc:`quickstart`. For a tour of what 0.4.0 added (PRF007,
 PNL004, and more), see the `0.4.0 tutorial
 <https://github.com/imann128/tsauditor/tree/main/examples/whats_new_0_4_0>`_.
-0.5.0 is a maintenance release; see the `changelog
-<https://github.com/imann128/tsauditor/blob/main/CHANGELOG.md>`_ for what
-changed.
+0.6.0 fixes a correctness bug in LEK003/PNL002 (the persistence-baseline
+comparison now happens in Fisher-z space rather than on raw correlations,
+restoring recall on highly autocorrelated targets), extends LEK005 to
+binary targets, and adds masking-aware ESD outlier recovery to
+``apply_fixes``. See the `changelog
+<https://github.com/imann128/tsauditor/blob/main/CHANGELOG.md>`_ for the
+full list.
 
 .. toctree::
    :maxdepth: 2

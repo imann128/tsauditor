@@ -2,7 +2,7 @@
 tsauditor.report.remediation
 -----------------------------
 The advisory layer. tsauditor detects and reports problems but never edits the
-user's data — dropping or rewriting a feature is a modeling decision only the
+user's data: dropping or rewriting a feature is a modeling decision only the
 user can make. This module maps each issue code to a concrete *suggested
 action* so the report tells the user what to consider doing, while leaving the
 decision (and the data) in their hands.
@@ -29,7 +29,7 @@ _REMEDIATIONS: Dict[str, str] = {
     "LEK002": (
         "Inspect how {target} is built. Its strongest correlation with the target "
         "falls at a future lag (+{peak_lag}), which means it aligns with future "
-        "target values — a sign it encodes information not available at prediction time."
+        "target values: a sign it encodes information not available at prediction time."
     ),
     "LEK003": (
         "Confirm {target} is computed only from past data. It tracks the future "
@@ -75,7 +75,7 @@ _REMEDIATIONS: Dict[str, str] = {
         "panel to the {n_complete_groups} entities with complete coverage."
     ),
     "PNL003": (
-        "Treat findings for the short entities as provisional — they fall below "
+        "Treat findings for the short entities as provisional: they fall below "
         "the {min_rows}-row minimum the leakage and stationarity checks need. "
         "Either gather more history for them or exclude them from the audit, "
         "rather than reading their silence as a clean result."
@@ -83,7 +83,7 @@ _REMEDIATIONS: Dict[str, str] = {
     "PNL004": (
         "Assign an entity id to the {n_null_rows} rows with a null value in "
         "'{group_col}', or drop them, before relying on this audit. They "
-        "currently receive no checks and no repair — their absence from every "
+        "currently receive no checks and no repair: their absence from every "
         "other finding is not evidence of health."
     ),
     # ── Anomaly ──────────────────────────────────────────────────────────────
@@ -118,14 +118,14 @@ _REMEDIATIONS: Dict[str, str] = {
         "outage or missing period that should be handled explicitly."
     ),
     "PRF006": (
-        "{target} has a high overall missing rate — consider dropping it or imputing "
+        "{target} has a high overall missing rate. Consider dropping it or imputing "
         "with care, and check whether the missingness is informative."
     ),
     "PRF007": (
         "{target} contains {non_finite_count} infinite value(s), leaving "
         "{n_finite_remaining} finite observation(s). Fix the upstream computation "
-        "that produced them — a division by zero, an overflow, or a log of a "
-        "non-positive number — rather than imputing, because an infinity records "
+        "that produced them (a division by zero, an overflow, or a log of a "
+        "non-positive number) rather than imputing, because an infinity records "
         "that a calculation failed, not that a measurement was unavailable. "
         "apply_fixes() will convert them to NaN and impute alongside genuine "
         "missing values if you need a usable frame first."

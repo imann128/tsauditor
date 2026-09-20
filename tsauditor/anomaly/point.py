@@ -6,11 +6,6 @@ from tsauditor.anomaly._common import (
     zscore_preset,
     zscore_iqr_masks,
     esd_masking_recovery,
-    # Re-exported for backward compatibility (this is where it used to live)
-    # and because tests target it directly; the real definition and its full
-    # docstring are in _common.py, alongside esd_masking_recovery, which is
-    # also what remediate.py's repair step now shares this logic through.
-    _generalized_esd,
 )
 
 

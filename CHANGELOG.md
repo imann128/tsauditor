@@ -325,36 +325,9 @@ the clamp is reverted, then pass again restored. This bug had zero prior
 test coverage anywhere in the suite, since every existing LEK002 test used
 series comfortably longer than the default `max_lag`.
 
-### Fixed: three bugs found in a dedicated correctness sweep, all reproduced before fixing
+### Fixed: two bugs found in a dedicated correctness sweep, both reproduced before fixing
 
-**1. Detector-tuning overrides never reached `apply_fixes`/`health_score`/`to_json`/`to_pdf`, silently
-falling back to the domain-only preset (most severe of the three).** `scan()` accepts
-`zscore_threshold=`/`stuck_window=`/`spike_threshold=`/`spike_window=`/`handle_missing=` and correctly
-used them for *detection*, but never recorded them in `report.metadata`. Only `domain` was kept. Every
-downstream re-derivation of "what counts as anomalous" (`apply_fixes`'s internal repair masks,
-`affected_cells()`, `GuardReport.health_score()`'s and `to_json()`'s/`to_pdf()`'s internal re-scan calls)
-re-derived its threshold from `domain` alone, silently discarding any explicit override the original
-`scan()` call had used. A caller who passed `scan(df, stuck_window=2)` because the domain-preset window
-(5) missed a real stuck run got a report that correctly flagged it, and a repair, and a health score,
-and a JSON/PDF export, that all quietly went back to window 5 and left it unrepaired or unscored.
-Detection and repair disagreeing about the same input is exactly the "drift" class of bug this
-codebase's own module docstrings and past CHANGELOG entries warn about; this was a new instance of it.
-
-Fixed by recording all five tuning parameters in `metadata` alongside `domain`, and adding a single
-`_resolve_detector_settings(report)` helper in `remediate.py` (explicit override wins, `None` still falls
-through to the domain preset, the same "is None, not falsy" precedence the detectors themselves use) that
-`apply_fixes`, `affected_cells`, `health_score()`, `to_json()`, and `export_pdf()` all now call instead of
-each re-deriving thresholds independently. `fix()` also gained the same five parameters so a one-shot
-`tsa.fix(df, stuck_window=2, ...)` call can set them without a separate `scan()`.
-`tests/test_fix.py` adds `test_stuck_window_override_is_forwarded_to_apply_fixes` (a
-`stuck_window=2`-only run flags a 3-point run that the domain-default window of 5 would have missed
-entirely, and proves `apply_fixes` actually repairs it) and
-`test_zscore_threshold_override_is_forwarded_to_health_score` (a strict `zscore_threshold=2.0` override
-catches more z-score outliers than the default preset, and `health_score()`'s re-scan reflects the same
-stricter picture). Both verified to fail with the exact pre-fix behavior when the metadata forwarding is
-reverted.
-
-**2. PNL001 (ragged panel) coverage was inflated by rows with no entity id.** `audit_panel_structure`
+**1. PNL001 (ragged panel) coverage was inflated by rows with no entity id.** `audit_panel_structure`
 computed `n_all` (the panel's total distinct timestamp count, used as the baseline every entity's coverage
 is compared against) from the raw, unfiltered `df.index`, including rows whose `group_col` value is null.
 A null-entity row belongs to no entity and is never scanned per-entity (PNL004 documents this exclusion
@@ -372,7 +345,7 @@ reports complete (`n_complete_groups == 1`) and `n_timestamps` still excludes th
 timestamps, and verified to fail (`n_timestamps` inflates to 110, `n_complete_groups` drops to 0) when the
 filter is reverted.
 
-**3. LEK004's tz-mismatch guard rejected two different-but-comparable timezones, not just genuine
+**2. LEK004's tz-mismatch guard rejected two different-but-comparable timezones, not just genuine
 aware/naive mismatches.** `_availability`'s explicit tz-mismatch check (added to turn a confusing raw
 pandas `TypeError` into a clear message) compared `index.tz != avail.dt.tz` directly: two tzinfo objects.
 That also raised for, e.g., a UTC index against a `US/Eastern` availability Series, even though pandas

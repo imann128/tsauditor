@@ -111,12 +111,12 @@ def audit_panel_structure(
         # to say about it.
         return issues
 
-    # Restricted to the same non-null rows PNL004 above already computed --
+    # Restricted to the same non-null rows PNL004 above already computed,
     # not df.index.unique() over the raw, unfiltered frame. A null-entity
     # row (see PNL004) belongs to no entity and is never scanned per-entity,
     # so a timestamp that exists *only* on such a row is not a timestamp any
     # entity could ever have coverage for. Left unfiltered, it inflated
-    # n_all and therefore every entity's shortfall below -- a panel where
+    # n_all and therefore every entity's shortfall below: a panel where
     # every real entity has complete, identical coverage got reported as
     # fully ragged (n_complete_groups=0) the moment any null-entity rows
     # existed at timestamps outside the real entities' own range, even
@@ -275,9 +275,9 @@ def audit_cross_sectional_leakage(
     factor comes to dominate, a *relative* measure decouples from each entity's
     own absolute outcome and the within-entity signal collapses, while the
     cross-sectional signal is unaffected. Measured on simulated panels (see
-    ``docs/proposals/pnl002-cross-sectional-leakage.md``), LEK002 detection fell
-    from 100% of entities to 22.5% as the common-factor ratio rose, while the
-    cross-sectional correlation stayed at 1.0 throughout.
+    ``docs/proposals/pnl002-cross-sectional-leakage.md``), LEK002 detection
+    fell from 100% of entities to 22.5% as the common-factor ratio rose,
+    while the cross-sectional correlation stayed at 1.0 throughout.
 
     That degradation is worse than a plain miss, because it feeds
     ``report.prevalence()``: a leak present in every entity would be reported as
@@ -304,7 +304,7 @@ def audit_cross_sectional_leakage(
     near the same ceiling, and a raw difference collapses to ~0 even for an
     exact cross-sectional lookahead (verified by simulation: an AR(1)
     cross-sectional persistence sweep reproduced LEK003's own collapse
-    pattern -- 100% detection through phi=0.9, 0% from phi=0.95 -- under the
+    pattern, 100% detection through phi=0.9, 0% from phi=0.95, under the
     old raw-difference formula, restored to 100% at every phi tested by the
     z-transform). See ``leakage.temporal``'s "Why the comparison happens in
     Fisher-z space" for the full derivation; this check reuses that module's
@@ -360,12 +360,12 @@ def audit_cross_sectional_leakage(
         return issues
 
     # PNL004's contract (see audit_panel_structure) is that a null entity id
-    # gets no checks at all -- there is no entity identity to correlate
+    # gets no checks at all: there is no entity identity to correlate
     # against. Dropping these rows *before* the str-cast below is required,
     # not cosmetic: on pandas < 3 (this package's declared support range,
     # pyproject.toml pins pandas>=1.5,<3), `.astype(str)` turns NaN into the
-    # literal string "nan", a real, non-null groupby key -- every null-id row
-    # would silently merge into one phantom "nan" entity that then
+    # literal string "nan", a real, non-null groupby key, so every null-id
+    # row would silently merge into one phantom "nan" entity that then
     # participates fully in the cross-sectional correlation below. That
     # directly contradicts PNL004's "excluded from every panel check... never
     # examined" guarantee, and audit_panel_structure/apply_fixes already
@@ -431,13 +431,13 @@ def audit_cross_sectional_leakage(
             if observed is None:
                 continue
             expected = abs(contemporaneous) * abs(persistence[k])
-            # Fisher-z difference, not a raw subtraction -- see LEK003
+            # Fisher-z difference, not a raw subtraction; see LEK003
             # (leakage/temporal.py, "Why the comparison happens in Fisher-z
             # space"). observed and expected are both bounded in [-1, 1] and
             # compress near +/-1, so once a panel's cross-sectional
             # persistence is high, a raw `abs(observed) - expected`
             # collapses toward 0 even for a feature that is an exact
-            # cross-sectional lookahead -- the same collapse LEK003 had
+            # cross-sectional lookahead: the same collapse LEK003 had
             # before this fix, reproduced here by direct simulation (AR(1)
             # cross-sectional persistence phi: 100% detection through
             # phi=0.9, 0% from phi=0.95 through phi=1.0, with the raw-
@@ -477,7 +477,7 @@ def audit_cross_sectional_leakage(
                         "observed_cs_corr": round(float(observed), 4),
                         "expected_from_cs_persistence": round(float(expected), 4),
                         # Fisher-z scale (arctanh difference), not a raw
-                        # correlation-point difference -- see the excess
+                        # correlation-point difference; see the excess
                         # computation above and LEK003's own evidence, which
                         # uses the same "excess_scale" key for the same
                         # reason.

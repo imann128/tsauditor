@@ -328,7 +328,7 @@ class GuardReport:
         ANO002 outlier and an ANO003 spike, or a value stuck at an extreme
         constant that is both an ANO002 outlier and an ANO001 stuck run), and
         detecting against an already-clipped or already-NaN'd value would
-        change what a later step finds -- silently missing cells the original
+        change what a later step finds: silently missing cells the original
         audit reported, or crediting the wrong action in ``last_fixes`` for a
         cell two steps both touch. Detecting against the same pristine input
         the audit itself scored means each step always finds exactly what its
@@ -365,7 +365,7 @@ class GuardReport:
         The detector tuning this report's original ``scan()`` call used
         (``zscore_threshold``, ``stuck_window``, ``spike_threshold``,
         ``spike_window``, ``handle_missing``) is threaded through here too,
-        not just ``target``/``domain``/``group_col`` -- otherwise this
+        not just ``target``/``domain``/``group_col``, otherwise this
         re-scan (and the mask ``affected_cells()`` recomputes from it)
         would silently fall back to the domain-only preset regardless of
         any explicit override the original scan used, scoring against
@@ -485,7 +485,7 @@ class GuardReport:
                 f"[{color}]{issue.severity.upper()}[/{color}]",
                 issue.code,
                 issue.module,
-                issue.column or "—",
+                issue.column or "-",
                 issue.description,
             )
 
@@ -514,10 +514,10 @@ class GuardReport:
             table.add_row(
                 f"[{color}]{row['severity'].upper()}[/{color}]",
                 row["code"],
-                row["column"] or "—",
+                row["column"] or "-",
                 f"{n}/{total}" if n is not None else "panel-level",
-                f"{row['pct']}%" if row["pct"] is not None else "—",
-                ", ".join(row["example_groups"]) or "—",
+                f"{row['pct']}%" if row["pct"] is not None else "-",
+                ", ".join(row["example_groups"]) or "-",
             )
 
         console.print(table)
@@ -581,7 +581,7 @@ class GuardReport:
                 # incidentally still right, affected_cells() would then
                 # recompute masks on values mixed across entities of very
                 # different scale. run_leakage/run_stationarity are also
-                # dropped here to match health_score()'s own re-scan --
+                # dropped here to match health_score()'s own re-scan:
                 # neither affects the score, and ADF is the most expensive
                 # check in the whole pipeline. The five detector-tuning
                 # settings are threaded through for the identical reason

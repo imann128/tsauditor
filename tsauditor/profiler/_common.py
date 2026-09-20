@@ -6,10 +6,10 @@ Shared run-length-encoding helper for the profiler checks.
 ``frequency.py`` (PRF001/PRF005, run lengths of large gaps) and
 ``missing.py`` (PRF002, run lengths of consecutive NaNs) each computed run
 starts, ends, and lengths from a 0/1 int array using the same three-step
-numpy pattern, independently -- two copies of one algorithm with no shared
+numpy pattern, independently: two copies of one algorithm with no shared
 implementation, the same category of drift risk as the anomaly presets in
-``tsauditor/anomaly/_common.py`` (see CHANGELOG [0.5.0]). Centralizing
-it here means a fix to the run-length boundary logic only needs to be made
+``tsauditor/anomaly/_common.py`` (see CHANGELOG [0.5.0]). Centralizing it
+here means a fix to the run-length boundary logic only needs to be made
 once and cannot silently diverge between the two callers.
 """
 

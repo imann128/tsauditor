@@ -8,7 +8,7 @@ both needed the same target-encoding logic, and had each grown their own
 byte-identical copy) so a future change to the encoding rule cannot drift out
 of sync between the two detectors that are supposed to agree on it.
 
-equivalence.py deliberately does NOT use this helper: its own module has a
+equivalence.py deliberately does not use this helper: its own module has a
 separate encoding block, on purpose, not as leftover duplication. Its AUC
 computation needs labels strictly in {0.0, 1.0}; Spearman-based detectors
 (the ones that do use encode_target here) only need a consistent ordering,

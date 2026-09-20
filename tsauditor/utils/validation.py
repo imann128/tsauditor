@@ -107,10 +107,11 @@ def validate_dataframe(
         df = df.set_index(time_col)
 
     if not isinstance(df.index, pd.DatetimeIndex):
-        # Do NOT silently coerce a numeric index. pd.to_datetime would happily
-        # reinterpret a plain RangeIndex like [0, 1, 2, ...] as nanosecond epoch
-        # timestamps (all near 1970-01-01), producing quietly wrong frequency and
-        # gap results. A numeric index almost never means "datetime", so refuse it.
+        # Not silently coerced: pd.to_datetime would happily reinterpret a
+        # plain RangeIndex like [0, 1, 2, ...] as nanosecond epoch
+        # timestamps (all near 1970-01-01), producing quietly wrong
+        # frequency and gap results. A numeric index almost never means
+        # "datetime", so refuse it.
         if pd.api.types.is_numeric_dtype(df.index):
             raise ValueError(
                 "DataFrame index is numeric, not datetime, and will not be coerced "
@@ -136,7 +137,7 @@ def validate_dataframe(
     # already a PRF004 CRITICAL finding, and both audit_frequency's own
     # dedup (`df[~df.index.duplicated(keep="first")]`) and anything else
     # downstream that assumes "first" means "first as the caller supplied
-    # it" would otherwise silently pick an arbitrary survivor -- the same
+    # it" would otherwise silently pick an arbitrary survivor: the same
     # DataFrame's rows in a different (but equally valid) input order could
     # produce a different repaired result.
     df = df.sort_index(kind="mergesort")
@@ -156,22 +157,18 @@ def ensure_sorted_datetime_index(df: pd.DataFrame, context: str) -> pd.DataFrame
 
     Every detector whose logic depends on row order (rolling windows,
     ``.shift()``, consecutive-run detection, positional lag alignment) must
-    call this at its *own* entry point, not just rely on scan()'s
-    ``validate_dataframe`` having already sorted upstream. Every
-    ``audit_*``/``detect_*`` function in this package is also public API,
-    called directly in this codebase's own test suite (see
-    ``tests/test_adapters.py``, and the leakage/anomaly unit tests), so
-    "the caller already sorted it" is only true on the ``scan()`` path, not
-    when a user imports a detector and calls it themselves.
+    call this at its own entry point, not rely on scan()'s
+    ``validate_dataframe`` having already sorted upstream: every
+    ``audit_*``/``detect_*`` function is also public API, called directly
+    in this codebase's own test suite, so "the caller already sorted it" is
+    only true on the ``scan()`` path.
 
-    Before this existed, a DataFrame with a genuinely valid DatetimeIndex
-    that was merely out of chronological order made these detectors produce
-    wrong-but-silent results instead of an error: ``audit_correlation_leakage``
-    and ``audit_temporal_leakage`` missed a perfect, constructed lag+1 leak
-    entirely (returned ``[]``, no exception) when the same rows were shuffled
-    out of order; ``audit_contextual_anomalies`` likewise missed an 8-point
-    stuck run. Both are silent false negatives in exactly the class of bug
-    this library exists to catch.
+    Before this existed, a valid but out-of-order DatetimeIndex made these
+    detectors produce wrong-but-silent results instead of an error:
+    ``audit_correlation_leakage`` and ``audit_temporal_leakage`` missed a
+    perfect, constructed lag+1 leak entirely when the same rows were
+    shuffled out of order; ``audit_contextual_anomalies`` likewise missed
+    an 8-point stuck run.
 
     Uses ``kind="mergesort"`` (stable) for the same reason
     ``validate_dataframe`` does: two rows sharing a duplicate timestamp must
@@ -198,7 +195,7 @@ def ensure_sorted_datetime_index(df: pd.DataFrame, context: str) -> pd.DataFrame
     if not isinstance(df.index, pd.DatetimeIndex):
         # Message kept consistent with every other detector's existing
         # ValueError wording ("DataFrame index must be a pd.DatetimeIndex")
-        # rather than inventing new phrasing -- callers and tests across the
+        # rather than inventing new phrasing: callers and tests across the
         # codebase already match against that exact string.
         raise ValueError(f"DataFrame index must be a pd.DatetimeIndex ({context}).")
     return df.sort_index(kind="mergesort")

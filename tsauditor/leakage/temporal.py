@@ -11,14 +11,14 @@ information about the target.
 The hard part, and why a naive test fails
 -------------------------------------------
 Time-series targets (e.g. price levels) are strongly autocorrelated. A
-perfectly *legitimate* trailing feature will therefore still correlate with
+perfectly legitimate trailing feature will therefore still correlate with
 the target's future, purely through persistence: if feature_t tracks
 target_t, and target_t predicts target_{t+k} on its own, then feature_t
 correlates with target_{t+k} too. A detector that just looks at
 "correlation with the future" would flag every honest feature.
 
 So we control for that persistence explicitly. The future correlation a
-feature can reach *legitimately* is bounded by its present association with
+feature can reach legitimately is bounded by its present association with
 the target times the target's own autocorrelation:
 
     expected(k) = corr(feature_t, target_t) * corr(target_t, target_{t+k})
@@ -39,13 +39,14 @@ gap between r=0.90 and r=0.95 represents far more "additional dependence"
 than the same 0.05 gap between r=0.10 and r=0.15. For a near-unit-root
 target (e.g. an undifferenced price level, this library's own stated
 finance use case), persistence(k) and a trailing feature's observed(k) both
-sit up near 0.999+, and a *leaky* feature's observed(k) sits only slightly
+sit up near 0.999+, and a leaky feature's observed(k) sits only slightly
 higher still. Subtracting two numbers both jammed against the same ceiling
 destroys almost all resolving power: swept over an AR(1) target's own
-autocorrelation φ, a deliberately leaky centered-window feature was caught
-100% of the time through φ=0.9, then collapsed to 13% at φ=0.95 and 0% from
-φ=0.97 through a literal random walk (φ=1.0) -- verified by direct
-simulation, matching what the raw-difference formula predicts it should do.
+autocorrelation phi, a deliberately leaky centered-window feature was
+caught 100% of the time through phi=0.9, then collapsed to 13% at phi=0.95
+and 0% from phi=0.97 through a literal random walk (phi=1.0), verified by
+direct simulation, matching what the raw-difference formula predicts it
+should do.
 
 ``excess(k)`` is therefore computed as the difference of Fisher
 z-transforms (``arctanh``) rather than of the raw correlations:
@@ -53,24 +54,25 @@ z-transforms (``arctanh``) rather than of the raw correlations:
     excess(k) = arctanh(|observed(k)|) - arctanh(|expected(k)|)
 
 ``arctanh`` is the standard variance-stabilizing transform for a
-correlation coefficient -- it stretches the space near ±1 back out, so a
+correlation coefficient: it stretches the space near +/-1 back out, so a
 fixed ``excess_threshold`` means roughly the same "real" amount of excess
 dependence regardless of how persistent the target is, instead of becoming
-either unreachable (raw difference, high persistence) or noise-amplified
-(a ratio/relative-excess reformulation was tried first and rejected: at
+either unreachable (raw difference, high persistence) or noise-amplified.
+A ratio/relative-excess reformulation was tried first and rejected: at
 persistence near 1 its denominator ``1 - expected`` approaches zero, which
-amplifies ordinary Spearman sampling noise into false positives -- measured
-12-30% false-positive rate on legitimately trailing features at φ >= 0.95,
-against zero for the z-transform at the same recall). At small-to-moderate
-correlations arctanh is nearly the identity (arctanh(r) ≈ r for |r| << 1),
-so this leaves detection at ordinary (non-persistent) targets unchanged in
-practice: re-running this module's own pre-existing test scenarios gave
-z-space excess values within 0.01 of the original raw-difference values.
-``excess_threshold``'s default (0.1) is unchanged and was verified, not
-assumed, to still mean approximately the same thing at typical persistence.
+amplifies ordinary Spearman sampling noise into false positives (measured
+12-30% false-positive rate on legitimately trailing features at phi >=
+0.95, against zero for the z-transform at the same recall). At
+small-to-moderate correlations arctanh is nearly the identity (arctanh(r)
+~= r for |r| << 1), so this leaves detection at ordinary (non-persistent)
+targets unchanged in practice: re-running this module's own pre-existing
+test scenarios gave z-space excess values within 0.01 of the original
+raw-difference values. ``excess_threshold``'s default (0.1) is unchanged
+and was verified, not assumed, to still mean approximately the same thing
+at typical persistence.
 
 This is a real, verified improvement, not a full fix: at extreme
-persistence (φ >= 0.97) a *weak*, heavily-noised leak (as opposed to an
+persistence (phi >= 0.97) a weak, heavily-noised leak (as opposed to an
 obvious one like a centered rolling window) is still only caught 13-57% of
 the time rather than the near-total collapse the raw-difference formula
 produced, because distinguishing a barely-there leak from noise when the
@@ -80,7 +82,7 @@ before/after sweep.
 
 All three quantities above are computed on one common sample per feature
 and lag: rows where the feature, the target, and the shifted target are
-*simultaneously* non-null. Computing each on its own independent
+simultaneously non-null. Computing each on its own independent
 pairwise-complete sample instead lets them silently describe different
 populations whenever a feature has its own missingness (e.g. a column only
 recorded starting partway through the series), which can shift the
@@ -110,7 +112,7 @@ def _fisher_z(r: float) -> float:
     Fisher's variance-stabilizing transform, ``arctanh(r)``.
 
     Clipped to +/-0.999999 first: an exact +/-1.0 correlation (a feature
-    that is a deterministic function of the target on the aligned sample --
+    that is a deterministic function of the target on the aligned sample,
     routine for a tiny ``min_obs``-sized overlap, not just a contrived edge
     case) sends ``arctanh`` to +/-inf, which would make ``excess`` infinite
     and therefore trivially ">= excess_threshold" regardless of what the
@@ -140,11 +142,11 @@ def _aligned_correlations(
     """
     r0 (x vs y), persistence (y vs future_y), and observed (x vs future_y),
     all three computed on one common mask: rows where x, y, and future_y are
-    *simultaneously* non-null and finite.
+    simultaneously non-null and finite.
 
     Why this matters: computing each correlation on its own independent
     pairwise-complete sample (the previous approach) lets them describe
-    different populations whenever the feature has its own missingness --
+    different populations whenever the feature has its own missingness,
     e.g. a column only recorded starting partway through the series. The
     persistence baseline is supposed to answer "how far could this specific
     feature's own population legitimately reach into the future via
@@ -153,7 +155,7 @@ def _aligned_correlations(
     synthetic regime-switching target (persistent early, choppy late) with a
     trailing, honest feature recorded only in the choppy half, persistence
     measured on the full series came out 0.75; measured on just the rows the
-    feature actually occupies, 0.22 -- a difference far larger than the
+    feature actually occupies, 0.22, a difference far larger than the
     default ``excess_threshold`` of 0.1, easily large enough to flip a
     verdict. See CHANGELOG [0.5.0] for the concrete case.
 
@@ -211,13 +213,13 @@ def audit_temporal_leakage(
         How much the observed future correlation must exceed the
         persistence-explained baseline to be flagged, measured in Fisher-z
         space (``arctanh(|observed|) - arctanh(|expected|)``), not raw
-        correlation units -- see the module docstring's "Why the comparison
+        correlation units; see the module docstring's "Why the comparison
         happens in Fisher-z space" section for why. Default 0.1, chosen
         because it reproduces this module's own pre-existing test scenarios
         to within 0.01 of the previous raw-difference values at ordinary
-        (non-extreme) persistence -- it means approximately the same thing
-        it always did there, while no longer collapsing to an unreachable
-        bar as persistence approaches 1.
+        (non-extreme) persistence: it means approximately the same thing it
+        always did there, while no longer collapsing to an unreachable bar
+        as persistence approaches 1.
     min_correlation : float
         The observed future correlation must itself be at least this large,
         so trivial noise excesses are ignored. Default 0.1.
@@ -260,15 +262,15 @@ def audit_temporal_leakage(
     if y.dropna().nunique() < 2:
         return issues
 
-    # The shifted-target series do not depend on any feature, so they're built
-    # once here. `persistence_prefilter` is a cheap, deliberately *unaligned*
-    # early-exit signal only -- computed on the loosest possible (y,
-    # future_y) pairwise-complete sample, ignoring any feature's own
+    # The shifted-target series do not depend on any feature, so they're
+    # built once here. `persistence_prefilter` is a cheap, deliberately
+    # unaligned early-exit signal only, computed on the loosest possible
+    # (y, future_y) pairwise-complete sample, ignoring any feature's own
     # missingness. It is never used in the expected(k) math itself, only to
     # skip a lag outright when even that loosest sample already has fewer
-    # than min_obs rows: any feature-aligned sample below is a *subset* of
+    # than min_obs rows: any feature-aligned sample below is a subset of
     # this one (it additionally requires the feature to be non-null), so it
-    # can only be smaller, never larger -- this pre-filter therefore never
+    # can only be smaller, never larger. This pre-filter therefore never
     # discards a lag that the aligned computation could otherwise use.
     futures = {k: y.shift(-k) for k in range(1, max_lag + 1)}
     persistence_prefilter = {
@@ -300,7 +302,7 @@ def audit_temporal_leakage(
                 continue
 
             # r0, persistence, and observed here are all computed on the
-            # *same* common mask (rows where x, y, and future_y are all
+            # same common mask (rows where x, y, and future_y are all
             # simultaneously present), unlike the three independent
             # pairwise-complete samples above. This is what expected(k) =
             # |r0| * |persistence| actually needs to mean something: a bound
@@ -312,7 +314,7 @@ def audit_temporal_leakage(
                 continue
 
             expected = abs(r0) * abs(per)  # legitimately reachable, raw scale
-            # Fisher-z difference, not a raw subtraction -- see the module
+            # Fisher-z difference, not a raw subtraction; see the module
             # docstring's "Why the comparison happens in Fisher-z space".
             # Raw `abs(observed) - expected` collapses to ~0 once both sides
             # are pinned near 1 (a near-unit-root target), even when the
@@ -348,7 +350,7 @@ def audit_temporal_leakage(
                         "observed_future_corr": round(best_observed, 4),
                         "expected_from_persistence": round(best_expected, 4),
                         # Fisher-z scale (arctanh difference), not a raw
-                        # correlation-point difference -- see the module
+                        # correlation-point difference; see the module
                         # docstring. Comparable to excess_threshold, which is
                         # in the same units.
                         "excess_over_persistence": round(best_excess, 4),

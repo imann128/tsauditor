@@ -200,7 +200,7 @@ def audit_equivalence(
         # Encode the two categories to 0/1 deterministically so the method
         # works for numeric (0/1) and categorical ("up"/"down") binaries alike.
         #
-        # This intentionally does NOT use leakage._common.encode_target. That
+        # This intentionally does not use leakage._common.encode_target. That
         # helper passes numeric targets through unchanged, which is correct
         # for correlation.py/temporal.py (Spearman rank correlation only
         # cares about order, not the actual values). Here it would be wrong:

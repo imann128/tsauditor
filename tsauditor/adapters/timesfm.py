@@ -101,10 +101,9 @@ def to_timesfm(
         # `clean[target_col].to_numpy(dtype=np.float32)` below raises a raw
         # `ValueError: could not convert string to float: '...'` with no
         # mention of target_col or what the caller needs to fix. The finite
-        # check further down exists for exactly this reason -- to raise
-        # clearly rather than let a bad value reach the model silently --
-        # and a non-numeric column deserves the same treatment, not a
-        # generic numpy conversion error.
+        # check further down exists for the same reason, to raise clearly
+        # rather than let a bad value reach the model silently, and a
+        # non-numeric column deserves the same treatment.
         raise TypeError(
             f"target_col '{target_col}' has dtype {df[target_col].dtype}, not "
             f"numeric. TimesFM forecasts a numeric series; encode or select a "

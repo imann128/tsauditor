@@ -21,17 +21,16 @@ def _require_joblib():
     clear, actionable ``ImportError`` if joblib isn't installed.
 
     ``n_jobs`` is a public, documented ``scan()`` parameter, but joblib was
-    only ever listed under the ``dev`` extra in ``pyproject.toml`` -- an
-    extra meant for contributors running the test suite, not something a
-    real caller would think to install. A caller who tried
+    only ever listed under the ``dev`` extra in ``pyproject.toml``, meant
+    for contributors running the test suite, not something a real caller
+    would think to install. A caller who tried
     ``scan(df, group_col=..., n_jobs=2)`` without it got a raw
     ``ModuleNotFoundError: No module named 'joblib'`` pointing at this
     module's internals, with no indication of what to install or that this
     is an expected, documented situation rather than a bug. Compare
     ``tsauditor.report.pdf``'s ``_require_matplotlib``, which has always
     guarded matplotlib's optional import the same way this now guards
-    joblib's -- this was simply the one optional-dependency import in the
-    codebase that never got the equivalent treatment.
+    joblib's.
     """
     try:
         from joblib import Parallel, delayed
@@ -104,7 +103,7 @@ def scan(
         the keys ``"bounds"``/``"relations"`` are present: a nested
         ``"bounds"`` value is always a dict mapping every column to its own
         spec dict, and a nested ``"relations"`` value is always a list/tuple
-        of pairs -- a flat per-column spec can never take either shape. This
+        of pairs: a flat per-column spec can never take either shape. This
         means a column that happens to be named ``"bounds"`` or
         ``"relations"`` is handled correctly either way, e.g.
         ``constraints={"spread": {...}, "relations": {"min": 0}}`` is
@@ -122,8 +121,8 @@ def scan(
         duplicated.
 
         Panel-level structure checks (PNL001 ragged coverage, PNL003 too-short
-        entities, PNL004 null-entity rows) also run unconditionally -- they
-        are not gated by any of the run_* toggles below -- and
+        entities, PNL004 null-entity rows) also run unconditionally, not
+        gated by any of the run_* toggles below, and
         ``report.prevalence()`` summarises how widely each finding occurs
         across entities.
     zscore_threshold : Optional[float]
@@ -151,8 +150,8 @@ def scan(
     run_leakage : bool
         Run leakage detection checks. Default True.
         The target-based checks (LEK001/002/003/005, and PNL002 in panel
-        mode) are silently skipped if target is None -- they have no target
-        to compare against. LEK004 (as-of leakage) is the exception: it is
+        mode) are silently skipped if target is None, since they have no
+        target to compare against. LEK004 (as-of leakage) is the exception: it is
         target-independent and still runs whenever ``available_at`` is
         supplied, target or not.
     run_stationarity : bool
@@ -179,35 +178,27 @@ def scan(
         ``ModuleNotFoundError``.
 
         Default 1: entities are audited sequentially, one at a time, in this
-        process: unchanged behavior from before this parameter existed.
+        process, matching behavior from before this parameter existed.
         ``-1`` uses every available core; any positive int caps it.
 
         Each entity already runs the single-series pipeline independently
-        (see ``group_col`` above), so this is a straightforward data-parallel
-        map, not a new execution model: what changes is only how many
-        entities are in flight at once, never which checks run or what they
-        find. Issues are collected back in the same per-entity, sorted-by-key
-        order ``n_jobs=1`` produces, so a report's issue ordering does not
-        depend on how many workers happened to be used to build it.
+        (see ``group_col`` above), so this is a plain data-parallel map:
+        only how many entities run at once changes, never which checks run
+        or what they find. Issues come back in the same per-entity,
+        sorted-by-key order ``n_jobs=1`` produces, so ordering doesn't
+        depend on worker count.
 
         Matters most for panels with many small entities (hundreds or
-        thousands of tickers/sensors/stores, each a modest number of rows):
-        per-entity fixed overhead (process/statsmodels/scipy call dispatch)
-        dominates total runtime there, not any single entity's own size, and
-        that overhead parallelizes cleanly since entities share no state.
-        ``joblib.Parallel``'s ``batch_size="auto"`` groups many small
-        entities into each dispatch round automatically, so a large entity
-        count does not by itself force one process-dispatch per entity.
-        Uses ``joblib``'s default ``"loky"`` (process) backend: entities
-        (already-partitioned DataFrame slices) and ``_ScanOptions`` are
-        plain, picklable data, the same property the README's external
-        "audit separate frames in parallel" recipe already relies on.
+        thousands of tickers/sensors/stores, each a modest number of rows),
+        where per-entity fixed overhead dominates total runtime rather than
+        any single entity's size, and that overhead parallelizes cleanly
+        since entities share no state. Uses joblib's default ``"loky"``
+        (process) backend with ``batch_size="auto"``.
 
         A panel with very few entities, or entities large enough that a
-        single ADF/leakage pass on one of them already dominates, gains
-        little or nothing here and pays worker start-up cost for it; the
-        default of 1 leaves that decision to the caller rather than guessing
-        a threshold.
+        single ADF/leakage pass on one already dominates, gains little here
+        and pays worker start-up cost for it; the default of 1 leaves that
+        decision to the caller.
 
     Returns
     -------
@@ -249,8 +240,8 @@ def scan(
         "frequency": infer_frequency(df.index),
         "target": target,
         "domain": domain,
-        # Recorded so downstream consumers of the report -- chiefly
-        # apply_fixes()/fix() -- can resolve time_col the same way this
+        # Recorded so downstream consumers of the report, chiefly
+        # apply_fixes()/fix(), can resolve time_col the same way this
         # function just did, given only the report and the caller's
         # original (not-yet-indexed) df. Without this, apply_fixes has no
         # way to know a time_col was ever used at all.
@@ -264,7 +255,7 @@ def scan(
         # so an explicit zscore_threshold=/stuck_window=/spike_threshold=/
         # spike_window=/handle_missing= argument to scan() was silently
         # replaced by the domain-only preset everywhere downstream of the
-        # report -- repairing with the wrong threshold, or scoring health
+        # report: repairing with the wrong threshold, or scoring health
         # against a mask that doesn't match what was actually flagged.
         "zscore_threshold": zscore_threshold,
         "stuck_window": stuck_window,
@@ -312,7 +303,7 @@ def scan(
     # consecutive rows alternate between different entities reporting on
     # nearly the same date, so consecutive diffs are near-zero regardless of
     # each entity's own cadence. Re-infer from the deduplicated union of
-    # every entity's own timestamps instead -- not a single entity's, which
+    # every entity's own timestamps instead, not a single entity's, which
     # is fragile to exactly which entity sorts first: a panel of 20 clean
     # daily entities plus one alphabetically-first entity with a sparse,
     # irregular history (e.g. a recent listing) would report the whole
@@ -354,9 +345,8 @@ def scan(
         # dispatch round, measuring actual task duration as it goes, so
         # per-task overhead doesn't dominate for the 8-90-row entities this
         # was built for. Results come back in call order (joblib.Parallel's
-        # documented guarantee, independent of which worker finished first),
-        # so issue ordering is identical to the n_jobs=1 path regardless of
-        # worker count.
+        # documented guarantee, regardless of which worker finished first),
+        # so issue ordering matches the n_jobs=1 path.
         per_group_issues = Parallel(n_jobs=n_jobs, batch_size="auto")(
             delayed(_run_group)(key, sub.drop(columns=[group_col]), options)
             for key, sub in groups
@@ -499,7 +489,7 @@ def _run_checks(df: pd.DataFrame, opts: "_ScanOptions"):
         # form, or a flat {col: spec} shorthand treated entirely as bounds.
         # These used to be told apart by key presence alone (`.get("bounds")`
         # / `.get("relations")` both None => flat), which broke the moment a
-        # real column was named "bounds" or "relations" -- e.g.
+        # real column was named "bounds" or "relations", e.g.
         # {"spread": {...}, "relations": {"min": 0}} (a flat dict bounding a
         # column literally called "relations") got misread as the nested
         # form with relations={"min": 0}, and audit_validity crashed trying

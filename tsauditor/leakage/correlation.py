@@ -42,10 +42,10 @@ Visualizing this check
 that ``audit_correlation_leakage`` searches over (used by
 ``GuardReport.to_pdf``'s lead/lag heatmap). Both functions are built on the
 same ``_lag_correlation_core`` so the heatmap can never show a peak the
-detector didn't also see, or vice versa -- a visualization silently drifting
+detector didn't also see, or vice versa. A visualization silently drifting
 out of sync with the detector it's supposed to represent is its own class of
-bug (the same failure mode as feeding a model a leaky column nobody
-double-checked against the audit that flagged it).
+bug, the same failure mode as feeding a model a leaky column nobody
+double-checked against the audit that flagged it.
 """
 
 from __future__ import annotations
@@ -64,11 +64,11 @@ def _align(a: np.ndarray, b: np.ndarray, tau: int):
     """Slice ``a`` and ``b`` so element i pairs a_t with b_{t+tau}."""
     n = len(a)
     # Both branches below produce two same-length slices except when
-    # abs(tau) > n (a lag larger than the whole series -- routine once
+    # abs(tau) > n (a lag larger than the whole series; routine once
     # max_lag is compared against a short panel entity, e.g. this
     # package's own default max_lag=10 against any series of 10 rows or
-    # fewer). A *start*-slice (`a[s:]`) already clamps to length 0 in that
-    # case; Python's *stop*-slice (`a[:n-tau]`) does not -- a negative
+    # fewer). A start-slice (`a[s:]`) already clamps to length 0 in that
+    # case; Python's stop-slice (`a[:n-tau]`) does not: a negative
     # stop wraps from the end instead, silently returning `abs(n-tau)`
     # elements instead of 0. That produced two differently-shaped arrays
     # downstream (`np.isnan(a) | np.isnan(b)` then raises a raw
@@ -95,8 +95,8 @@ def _lag_correlation_core(
     Shared core for ``audit_correlation_leakage`` (which reduces each row to
     its peak) and ``lag_correlation_matrix`` (which returns the grid as-is).
     Factored out so there is exactly one place that decides what "the
-    correlation of this feature with the target at this lag" means --
-    duplicating this loop for the heatmap would risk the two silently
+    correlation of this feature with the target at this lag" means.
+    Duplicating this loop for the heatmap would risk the two silently
     disagreeing (e.g. a rounding or masking difference) about the same
     underlying number.
 
@@ -106,8 +106,8 @@ def _lag_correlation_core(
         ``matrix`` has shape ``(len(feature_names), 2 * max_lag + 1)``, column
         ``k`` corresponding to lag ``k - max_lag``. Entries are ``NaN`` where
         fewer than ``min_obs`` paired observations exist at that lag, or
-        either side is constant on the overlap (undefined correlation) --
-        the same skip conditions ``audit_correlation_leakage`` has always
+        either side is constant on the overlap (undefined correlation), the
+        same skip conditions ``audit_correlation_leakage`` has always
         applied, now visible instead of silently discarded.
     """
     n_lags = 2 * max_lag + 1
@@ -149,7 +149,7 @@ def lag_correlation_matrix(
     Full feature x lag Spearman cross-correlation grid against ``target``.
 
     This is the same computation ``audit_correlation_leakage`` (LEK002) runs
-    internally, exposed in full instead of reduced to each feature's peak --
+    internally, exposed in full instead of reduced to each feature's peak,
     e.g. to drive ``GuardReport.to_pdf``'s lead/lag heatmap, or your own
     plotting. A cell is ``NaN`` where there were fewer than ``min_obs``
     overlapping observations at that lag, or one side was constant on the

@@ -88,18 +88,18 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
     # 3. Finding maximum_gap threshold based on domain.
     #
     # Deliberately two-way, not three-way like the anomaly presets: the
-    # non-finance branch is already a *relative*, self-calibrating threshold
+    # non-finance branch is already a relative, self-calibrating threshold
     # (3x the series' own median gap), which adapts to whatever the actual
-    # sampling cadence is -- exactly what sensor data needs, since its
-    # cadence varies from sub-second to hourly depending on the device, and
-    # no single absolute day-count would work across that range. Finance is
-    # the one domain that gets an absolute constant instead, specifically
-    # because trading calendars have a known, bounded gap structure
-    # (weekends/holidays, ~1-4 days) that a relative multiplier would handle
-    # less predictably. A sensor-specific branch would need its own relative
-    # multiplier (not 3.0x), and there is no measured basis for a different
-    # number yet -- see audit_missing's cluster_threshold docstring for the
-    # related, less defensible version of this gap.
+    # sampling cadence is. That's what sensor data needs, since its cadence
+    # varies from sub-second to hourly depending on the device, and no
+    # single absolute day-count would work across that range. Finance gets
+    # an absolute constant instead because trading calendars have a known,
+    # bounded gap structure (weekends/holidays, ~1-4 days) that a relative
+    # multiplier would handle less predictably. A sensor-specific branch
+    # would need its own relative multiplier (not 3.0x), and there is no
+    # measured basis for a different number yet; see audit_missing's
+    # cluster_threshold docstring for the related, less defensible version
+    # of this gap.
     if domain == "finance":
         maximum_gap_threshold = 5.0
     else:

@@ -502,8 +502,8 @@ Featured on [Python Hub](https://pythonhub.dev)
 ## Status
 
 Beta (`0.5.0`). Profiler, anomaly, leakage, validity, panel, remediation, and export
-modules are implemented and tested (500 tests passing; CI across Python 3.9–3.14 on
-Linux, Windows, macOS).
+modules are implemented and extensively tested; CI runs across Python 3.9–3.14 on
+Linux, Windows, macOS.
 
 ## License
 

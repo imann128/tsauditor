@@ -50,8 +50,8 @@ def audit_contextual_anomalies(
     issues = []
 
     # Both ANO001 (consecutive-run detection) and ANO003 (rolling local
-    # z-score) depend on row *position*, not just on the index being a
-    # DatetimeIndex -- a valid-but-unsorted index previously made this
+    # z-score) depend on row position, not just on the index being a
+    # DatetimeIndex: a valid-but-unsorted index previously made this
     # function silently miss real stuck runs and spikes. See
     # ensure_sorted_datetime_index's docstring.
     df = ensure_sorted_datetime_index(df, "audit_contextual_anomalies")
@@ -89,7 +89,7 @@ def audit_contextual_anomalies(
 
         # --- ANO001 ---
         # Group by consecutive values, bridging a lone missing reading inside
-        # an otherwise-flat run (still a stuck run) -- this is about what
+        # an otherwise-flat run (still a stuck run). This is about what
         # "stuck" means, not a general missing-data preference, so it applies
         # regardless of handle_missing (which governs the series used by
         # ANO003 above, a separate concern). Bridging via `series`/
@@ -98,7 +98,7 @@ def audit_contextual_anomalies(
         #
         # Shared with remediate.py's repair step (tsauditor.anomaly._common)
         # so detection and repair cannot silently disagree about which rows
-        # are part of a stuck run -- see stuck_run_mask's docstring for the
+        # are part of a stuck run; see stuck_run_mask's docstring for the
         # bridging rationale in full.
         stuck_mask, counts = stuck_run_mask(series, stuck_window)
 
@@ -115,8 +115,8 @@ def audit_contextual_anomalies(
             )
 
         # --- ANO003: contextual spike detection ---
-        # Compare each point to its LOCAL context (the surrounding window),
-        # EXCLUDING the point itself. If the point stays in its own window an
+        # Compare each point to its local context (the surrounding window),
+        # excluding the point itself. If the point stays in its own window an
         # extreme spike inflates the window mean and std and masks itself, so
         # |z| never crosses the threshold (this was the original bug: a 50x
         # spike scored only z ~= 1.8 in a centered 5-window). Shared with

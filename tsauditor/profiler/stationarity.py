@@ -24,7 +24,7 @@ def audit_stationarity(
     issues = []
 
     # 1. Validation: the ADF test fits lagged regressions on the raw row
-    # sequence -- it has no notion of the DatetimeIndex's actual timestamps,
+    # sequence, with no notion of the DatetimeIndex's actual timestamps,
     # only row order. An out-of-order-but-valid index would silently feed
     # adfuller a scrambled series and produce a meaningless statistic with
     # no error. See ensure_sorted_datetime_index's docstring.

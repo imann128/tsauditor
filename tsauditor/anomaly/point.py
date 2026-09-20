@@ -55,10 +55,10 @@ def audit_point_anomalies(
     mean/std after each removal and so cannot be blinded by the
     contamination it is scoring) are folded into the points this function
     flags, not just reported as a diagnostic count. Before this, ESD's
-    result never changed what was flagged -- only IQR's own points were
+    result never changed what was flagged: only IQR's own points were
     reported, so a point beyond IQR's fence but still masked from the raw
     z-score (the exact case ``masking_suspected`` exists to name) was named
-    in evidence as *suspected* but never itself surfaced as a flagged
+    in evidence as suspected but never itself surfaced as a flagged
     anomaly. ``evidence["esd_recovered_count"]`` reports how many flagged
     points came from ESD specifically (0 when ``masking_suspected`` is
     False, since ESD's result isn't used for flagging in that case).
@@ -66,26 +66,26 @@ def audit_point_anomalies(
     ``apply_fixes(outliers=...)`` stays consistent with this: ``"nan"``/
     ``"drop"`` repair the ESD-recovered points along with everything else
     (``remediate.py`` shares ``esd_masking_recovery``, the same function this
-    detector uses), and ``"clip"`` now also reaches them -- not by clipping
-    to a data-derived band (no such band is guaranteed to actually be
-    outside every point Rosner's test flags; see ``_generalized_esd``'s
-    docstring), but by NaN-ing just those specific rows and letting the
-    ``missing`` imputation step fill them, separately from the ordinary
-    z-band/IQR-fence clip applied to the rest of the column. See
-    ``remediate._outlier_mask``, ``remediate._esd_masking_repair``, and the
-    "clip" branch of ``apply_fixes`` for the mechanics and why a single
-    whole-column clip bound cannot reach these points at all.
+    detector uses), and ``"clip"`` now also reaches them, not by clipping to
+    a data-derived band (no such band is guaranteed to actually be outside
+    every point Rosner's test flags; see ``_generalized_esd``'s docstring),
+    but by NaN-ing just those specific rows and letting the ``missing``
+    imputation step fill them, separately from the ordinary z-band/IQR-fence
+    clip applied to the rest of the column. See ``remediate._outlier_mask``,
+    ``remediate._esd_masking_repair``, and the "clip" branch of
+    ``apply_fixes`` for the mechanics and why a single whole-column clip
+    bound cannot reach these points at all.
 
     This still does not cover every masking scenario: if contamination is
-    heavy enough that the IQR rule *itself* finds nothing (Tukey's fence has
+    heavy enough that the IQR rule itself finds nothing (Tukey's fence has
     roughly a 25% breakdown point, well above what the z-score's ~0%
     breakdown point tolerates but not unlimited), ``combined_mask`` is empty
     before ESD is even consulted, and the column is skipped with no ANO002
     Issue at all. Recovering that case would mean running ESD unconditionally
-    on every column rather than only when IQR has already found something to
-    disagree with the z-score about, which is a real added cost (ESD is
-    O(k*n) per column) for a substantially rarer failure mode; it is left as
-    a known, separate limitation rather than folded into this fix.
+    on every column instead of only when IQR has already found something to
+    disagree with the z-score about, a real added cost (ESD is O(k*n) per
+    column) for a substantially rarer failure mode; left as a known,
+    separate limitation rather than folded into this fix.
     """
     issues = []
 
@@ -129,7 +129,7 @@ def audit_point_anomalies(
             # Diagnostic first, detection second: ESD's result (see
             # _generalized_esd's docstring) can now change combined_mask
             # itself, so it must run before worst_pos/masked_abs_z are
-            # computed from combined_mask below -- not after, as it did
+            # computed from combined_mask below, not after, as it did
             # when it was evidence-only.
             #
             # Resolves the otherwise ambiguous case where agreement_count is
@@ -144,7 +144,7 @@ def audit_point_anomalies(
             #
             # esd_masking_recovery (tsauditor.anomaly._common) is the single
             # place that decides "ambiguous", "masking_suspected", which
-            # points ESD flags, and the ESD-consistent clip bound -- shared
+            # points ESD flags, and the ESD-consistent clip bound. Shared
             # with remediate.py's repair step (both the nan/drop mask and the
             # clip band for masked points) so detection and repair cannot
             # disagree about what a masked column's ANO002 finding covers.
@@ -155,7 +155,7 @@ def audit_point_anomalies(
             masking_suspected = recovery.masking_suspected
 
             # Fold ESD's own flagged points into detection, not just into
-            # evidence -- see this function's Notes for why a diagnostic-only
+            # evidence; see this function's Notes for why a diagnostic-only
             # count left the exact case masking_suspected exists to name
             # (a point beyond IQR's fence but still masked from the raw
             # z-score) undetected. esd_masking_recovery already gates
@@ -209,10 +209,10 @@ def audit_point_anomalies(
                         "esd_outlier_count": n_esd,
                         "masking_suspected": masking_suspected,
                         # How many of the points in this Issue came from ESD
-                        # rather than z-score/IQR -- 0 unless masking_suspected.
+                        # rather than z-score/IQR; 0 unless masking_suspected.
                         "esd_recovered_count": esd_recovered_count,
                         # Same masked-argmax as worst_pos, not a column-wide
-                        # z_scores.abs().max() -- max_zscore is presented
+                        # z_scores.abs().max(): max_zscore is presented
                         # alongside worst_value/worst_timestamp as describing
                         # the same point, so it must be consistent with them
                         # rather than silently describing a different,

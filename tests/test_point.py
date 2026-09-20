@@ -166,9 +166,9 @@ def test_masking_suspected_ratio_boundary():
     #
     # _generalized_esd now lives in tsauditor.anomaly._common (moved there so
     # remediate.py's repair step can share esd_masking_recovery, which calls
-    # it, with this detector -- see anomaly/_common.py) and returns
+    # it, with this detector; see anomaly/_common.py) and returns
     # (count, positions, bound). audit_point_anomalies no longer calls it
-    # directly -- it goes through esd_masking_recovery -- so the patch target
+    # directly: it goes through esd_masking_recovery, so the patch target
     # is _common's own module-level name, which is what esd_masking_recovery
     # resolves at call time; patching point_module._generalized_esd (still
     # re-exported there for backward compatibility) would not affect it.

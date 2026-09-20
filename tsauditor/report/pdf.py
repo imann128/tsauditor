@@ -170,7 +170,7 @@ def _issues_table(fig, left, top, width, issues, fontsize=8) -> None:
 def _prevalence_table(fig, left, top, width, rows, fontsize=8) -> None:
     """
     Draw the panel prevalence table: one row per (code, column) finding, with
-    how many entities it hits -- the panel counterpart to _issues_table.
+    how many entities it hits. The panel counterpart to _issues_table.
 
     Without this, a panel PDF rendered report.all_issues directly: one row
     per entity per finding, with no entity label on the row at all (the row
@@ -336,7 +336,7 @@ def export_pdf(
         # where detection is incidentally still right, affected_cells()
         # would recompute masks on values mixed across entities of very
         # different scale). This is the same fix as summary.py's
-        # GuardReport.to_json() -- a separate, independent copy of the same
+        # GuardReport.to_json(), a separate, independent copy of the same
         # re-scan that had the same gap. The five detector-tuning settings
         # are threaded through for the same reason: without them this
         # re-scan silently falls back to the domain-only preset regardless
@@ -457,8 +457,8 @@ def export_pdf(
         #
         # Panel scans use the prevalence view (one row per finding, with how
         # many entities it hits) instead of report.all_issues. A 500-entity
-        # panel can raise tens of thousands of issues -- report.prevalence()'s
-        # own docstring cites exactly that -- and report.all_issues has no
+        # panel can raise tens of thousands of issues (report.prevalence()'s
+        # own docstring cites exactly that), and report.all_issues has no
         # entity label on each row at all, so dumping it here would produce a
         # PDF with hundreds of continuation pages of visually-identical,
         # unlabeled rows for a single systemic finding. report.summary()'s

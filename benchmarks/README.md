@@ -14,23 +14,17 @@ python benchmarks/accuracy_suite.py
 
 Prints a summary and writes `benchmarks/results/accuracy_report.md`.
 
-This is deliberately **not** part of the pytest suite. Tests assert
-specific engineering behavior with a pass/fail verdict; this measures
-statistical detection accuracy on a small, curated set of real cases and
-is meant to be read, not gated on — the same spirit as the LEK002
-threshold table in `CHANGELOG.md` (a measured tradeoff, reported plainly,
-not a hidden pass/fail).
 
 ## Current cases
 
-- **ogdc_changep** / **ogdc_changep_statistical_only** — OGDC (Pakistan
+- **ogdc_changep** / **ogdc_changep_statistical_only** : OGDC (Pakistan
   Stock Exchange) equity data, tsauditor's own original motivating case.
   Deliberately split into two runs because the five documented leaky
   columns split across two different leakage *mechanisms*: two
   (`ChangeP`, `Returns`) are statistical target-equivalence, caught by
   LEK001 from the values alone; three (`Open`, `High`, `Low`) are leaky
   only because of *when* they become available, which LEK004 can only
-  catch if the caller supplies that fact via `available_at` — no
+  catch if the caller supplies that fact via `available_at` no
   statistical test can infer publish timing from values alone. Reporting
   both runs side by side keeps the LEK001-only number (100% precision,
   40% recall) visible instead of hidden behind the combined

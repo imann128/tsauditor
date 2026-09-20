@@ -16,40 +16,32 @@ def audit_non_finite(df: pd.DataFrame) -> list:
     """
     Audit numeric columns for infinite values (PRF007).
 
-    Why this is a separate check from missingness
-    ---------------------------------------------
-    ``np.inf`` is not a missing value and is not an outlier. ``isna()`` is False
-    for it, so PRF002 and PRF006 never see it, and every anomaly and leakage
-    detector in this library quietly replaces it with NaN on its own working
-    copy so its arithmetic does not break. The result before this check existed
-    was that an inf was reported by nothing and repaired by nothing: a user
-    could run ``scan()``, see no relevant issue, run ``fix()``, and still hand
+    ``np.inf`` is not a missing value and is not an outlier. ``isna()`` is
+    False for it, so PRF002 and PRF006 never see it, and every anomaly and
+    leakage detector quietly replaces it with NaN on its own working copy so
+    its arithmetic does not break. Before this check existed, an inf was
+    reported by nothing and repaired by nothing: a user could run
+    ``scan()``, see no relevant issue, run ``fix()``, and still hand
     infinities to their model.
 
-    Why there is no rate threshold
-    ------------------------------
-    PRF006 needs a threshold because some missingness is normal and the question
-    is how much is too much. That question does not arise here. An infinity is
-    never a measurement; it is the residue of a division by zero, an overflow, or
-    a log of zero somewhere upstream. One is a defect, so the threshold is one.
-    This is deliberate rather than an oversight, and it is why PRF007 takes no
-    threshold parameter.
+    No rate threshold: PRF006 needs one because some missingness is normal
+    and the question is how much is too much. That question does not arise
+    here. An infinity is never a measurement; it is the residue of a
+    division by zero, an overflow, or a log of zero somewhere upstream. One
+    is a defect, so the threshold is one, and PRF007 takes no threshold
+    parameter.
 
-    Why CRITICAL
-    ------------
-    Matching PRF004 (duplicate timestamps), and for the same reason: it
-    invalidates other checks rather than merely describing the data. A single inf
-    makes a column's mean inf and its standard deviation NaN, so any statistic
-    computed on the raw column is meaningless, and scikit-learn raises at
-    ``fit`` time rather than degrading gracefully.
+    CRITICAL, matching PRF004 (duplicate timestamps), for the same reason:
+    it invalidates other checks rather than merely describing the data. A
+    single inf makes a column's mean inf and its standard deviation NaN, so
+    any statistic on the raw column is meaningless, and scikit-learn raises
+    at ``fit`` time rather than degrading gracefully.
 
-    Evidence
-    --------
-    ``n_finite_remaining`` is the count the other detectors actually work with,
-    and ``below_leakage_min_obs`` reports whether that count falls under the 30
-    observations the leakage checks require. That second key matters more than
-    the raw count: below it, the column is not merely noisier, it is skipped
-    entirely by LEK001, LEK002, LEK003 and LEK005 with no message.
+    ``n_finite_remaining`` in the evidence is the count the other detectors
+    actually work with; ``below_leakage_min_obs`` reports whether that
+    count falls under the 30 observations the leakage checks require. Below
+    it, the column is not merely noisier, it is skipped entirely by LEK001,
+    LEK002, LEK003 and LEK005 with no message.
 
     Parameters
     ----------
@@ -63,8 +55,8 @@ def audit_non_finite(df: pd.DataFrame) -> list:
     """
     issues = []
 
-    # "first_occurrence" below reports df.index[argmax(isinf)] -- the row at
-    # the first *position*, not the first chronological timestamp. On an
+    # "first_occurrence" below reports df.index[argmax(isinf)]: the row at
+    # the first position, not the first chronological timestamp. On an
     # unsorted-but-valid DatetimeIndex those differ, silently mislabeling
     # which occurrence is "first". See ensure_sorted_datetime_index's
     # docstring.
@@ -139,7 +131,7 @@ def audit_missing(
     cluster_threshold : int, optional
         Minimum consecutive NaNs to count as a cluster. If None, derived
         automatically from domain: 5 for "finance", 3 otherwise (including
-        "sensor" -- see Notes).
+        "sensor"; see Notes).
     missing_rate_threshold : float, default 0.30
         Proportion threshold (0.0 to 1.0) above which a column is flagged
         for high missingness.
@@ -154,25 +146,21 @@ def audit_missing(
     Notes
     -----
     ``cluster_threshold``'s domain resolution only special-cases "finance";
-    "sensor" silently falls into the same default as domain=None. Unlike
-    ``audit_frequency``'s ``maximum_gap_threshold`` (which is *relative* to
-    the series' own median gap and so already adapts to any sampling
-    cadence), ``cluster_threshold`` is a flat row count. "3 consecutive
-    missing rows" means something very different for a 1-second sensor feed
-    than for daily data, so this genuinely could use a sampling-rate-aware
-    default rather than a domain-keyed one. No sensor-specific constant has
-    been added here, deliberately: picking a number without a measured basis
-    would be an unvalidated heuristic dressed up as domain expertise, the
-    same failure mode flagged elsewhere in this codebase (see
-    ``audit_point_anomalies``'s ``masking_suspected`` Notes). If this needs
-    fixing, the more defensible fix is likely making the default scale with
-    the series' inferred sampling frequency (as ``audit_frequency`` already
-    does via the series' own median gap), not adding a guessed "sensor"
-    branch.
+    "sensor" falls into the same default as domain=None. Unlike
+    ``audit_frequency``'s ``maximum_gap_threshold`` (relative to the
+    series' own median gap, so it adapts to any sampling cadence),
+    ``cluster_threshold`` is a flat row count: "3 consecutive missing rows"
+    means something very different for a 1-second sensor feed than for
+    daily data. No sensor-specific constant has been added here
+    deliberately, since picking one without a measured basis would be an
+    unvalidated heuristic dressed up as domain expertise. The more
+    defensible fix, if this needs one, is likely scaling the default with
+    the series' inferred sampling frequency, as ``audit_frequency`` already
+    does, rather than adding a guessed "sensor" branch.
     """
     issues = []
 
-    # Cluster/consecutive-run detection (PRF002) is inherently positional --
+    # Cluster/consecutive-run detection (PRF002) is inherently positional:
     # consecutive_run_lengths walks row-to-row. See
     # ensure_sorted_datetime_index's docstring.
     df = ensure_sorted_datetime_index(df, "audit_missing")

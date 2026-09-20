@@ -2,7 +2,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tsauditor.leakage.correlation import audit_correlation_leakage, lag_correlation_matrix
+from tsauditor.leakage.correlation import (
+    audit_correlation_leakage,
+    lag_correlation_matrix,
+)
 from tsauditor.report.summary import WARNING
 
 

@@ -162,9 +162,7 @@ def audit_point_anomalies(
                 recovered[recovery.esd_positions] = True
                 already_flagged = combined_mask.to_numpy()
                 esd_recovered_count = int((recovered & ~already_flagged).sum())
-                combined_mask = combined_mask | pd.Series(
-                    recovered, index=series.index
-                )
+                combined_mask = combined_mask | pd.Series(recovered, index=series.index)
 
             # Locate the worst *flagged* point, positionally. Label-based
             # lookup (series.loc[idxmax()]) returns a Series rather than a

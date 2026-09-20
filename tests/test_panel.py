@@ -1290,9 +1290,7 @@ def test_n_jobs_matches_sequential_result(panel):
     input -- proven by structural equality (Issue is a plain @dataclass), not
     just matching counts.
     """
-    kwargs = dict(
-        target="direction", group_col="ticker", run_stationarity=False
-    )
+    kwargs = dict(target="direction", group_col="ticker", run_stationarity=False)
     sequential = tsa.scan(panel, n_jobs=1, **kwargs)
     parallel = tsa.scan(panel, n_jobs=2, **kwargs)
 

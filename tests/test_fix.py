@@ -151,9 +151,15 @@ def test_clip_naans_esd_recovered_points_instead_of_inventing_a_bound():
     report = GuardReport(warnings=audit_point_anomalies(df), metadata={"domain": None})
     ev = next(i for i in report.all_issues if i.code == "ANO002").evidence
     assert ev["masking_suspected"] is True
-    assert ev["esd_recovered_count"] > 0, "fixture must exercise the recovered-points path"
+    assert ev["esd_recovered_count"] > 0, (
+        "fixture must exercise the recovered-points path"
+    )
 
-    from tsauditor.anomaly._common import zscore_iqr_masks, zscore_preset, esd_masking_recovery
+    from tsauditor.anomaly._common import (
+        zscore_iqr_masks,
+        zscore_preset,
+        esd_masking_recovery,
+    )
 
     series = df["x"]
     z_mask, iqr_mask, _, _ = zscore_iqr_masks(series, zscore_preset(None))
@@ -175,7 +181,8 @@ def test_clip_naans_esd_recovered_points_instead_of_inventing_a_bound():
     ordinary_flagged = np.where(combined_before)[0]
     assert not out["x"].iloc[ordinary_flagged].isna().any()
     unflagged = [
-        p for p in range(len(series))
+        p
+        for p in range(len(series))
         if p not in set(recovery.esd_positions) and not combined_before[p]
     ]
     pd.testing.assert_series_equal(
@@ -638,9 +645,9 @@ def test_stuck_window_override_is_forwarded_to_apply_fixes():
     df = pd.DataFrame({"x": vals}, index=dates)
 
     report = tsa.scan(df, stuck_window=2, run_leakage=False, run_stationarity=False)
-    assert any(
-        i.code == "ANO001" and i.column == "x" for i in report.all_issues
-    ), "scan() itself must flag the run at the smaller window"
+    assert any(i.code == "ANO001" and i.column == "x" for i in report.all_issues), (
+        "scan() itself must flag the run at the smaller window"
+    )
 
     fixed = report.apply_fixes(df, outliers=None, missing=None, stuck="nan")
     assert fixed["x"].iloc[40:43].isna().all(), (
@@ -671,7 +678,9 @@ def test_zscore_threshold_override_is_forwarded_to_health_score():
     df = pd.DataFrame({"x": vals}, index=dates)
 
     loose = tsa.scan(df, run_leakage=False, run_stationarity=False)
-    strict = tsa.scan(df, zscore_threshold=2.0, run_leakage=False, run_stationarity=False)
+    strict = tsa.scan(
+        df, zscore_threshold=2.0, run_leakage=False, run_stationarity=False
+    )
 
     z_loose = next(i for i in loose.all_issues if i.code == "ANO002").evidence[
         "zscore_outlier_count"

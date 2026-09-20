@@ -232,7 +232,9 @@ def _correlation_heatmap_fig(plt, matrix_df: pd.DataFrame, target: str, top_n: i
     zero_col = lags.index(0) if 0 in lags else None
 
     fig = plt.figure(figsize=_A4)
-    fig.text(0.08, 0.955, "Lead/Lag Cross-Correlation Heatmap", fontsize=14, weight="bold")
+    fig.text(
+        0.08, 0.955, "Lead/Lag Cross-Correlation Heatmap", fontsize=14, weight="bold"
+    )
     subtitle = (
         f"Spearman correlation of each feature with target '{target}' across "
         f"lags {lags[0]} to {lags[-1]}. Positive lag = feature aligns with "
@@ -271,12 +273,18 @@ def _correlation_heatmap_fig(plt, matrix_df: pd.DataFrame, target: str, top_n: i
 
     ax = fig.add_axes([0.30, bottom, 0.55, height])
     masked = np.ma.masked_invalid(sub.to_numpy(dtype=float))
-    im = ax.imshow(masked, aspect="auto", cmap="RdBu_r", vmin=-1, vmax=1, interpolation="nearest")
-    im.cmap.set_bad(color="0.85")  # blank cells render as light grey, not white-on-white
+    im = ax.imshow(
+        masked, aspect="auto", cmap="RdBu_r", vmin=-1, vmax=1, interpolation="nearest"
+    )
+    im.cmap.set_bad(
+        color="0.85"
+    )  # blank cells render as light grey, not white-on-white
 
     ax.set_yticks(range(len(sub)))
     ax.set_yticklabels(list(sub.index), fontsize=7)
-    step = max(1, len(lags) // 15)  # thin x labels so they don't overlap on wide max_lag
+    step = max(
+        1, len(lags) // 15
+    )  # thin x labels so they don't overlap on wide max_lag
     ax.set_xticks(range(0, len(lags), step))
     ax.set_xticklabels([str(lags[i]) for i in range(0, len(lags), step)], fontsize=7)
     ax.set_xlabel("Lag (periods)", fontsize=9)
@@ -535,7 +543,11 @@ def export_pdf(
                 # bonus page when the rest of the report rendered fine.
                 matrix_df = None
 
-            if matrix_df is not None and not matrix_df.empty and matrix_df.notna().any().any():
+            if (
+                matrix_df is not None
+                and not matrix_df.empty
+                and matrix_df.notna().any().any()
+            ):
                 heat_fig = _correlation_heatmap_fig(
                     plt, matrix_df, target, heatmap_top_n
                 )

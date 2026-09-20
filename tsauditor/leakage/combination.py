@@ -604,10 +604,7 @@ def audit_combination_leakage(
             # never does (max 0.075 by chance), so the extra
             # permutation-validated work is paid almost exclusively on
             # candidates already worth the attention.
-            if (
-                y01_vals is not None
-                and gate <= score < threshold
-            ):
+            if y01_vals is not None and gate <= score < threshold:
                 boosted = _binary_combination_auc(
                     y_vals, X_vals, y01_vals, threshold, seed=seed
                 )

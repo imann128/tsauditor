@@ -65,12 +65,7 @@ class Case:
 
 
 def _load_ogdc() -> pd.DataFrame:
-    path = (
-        HERE.parent
-        / "examples"
-        / "ogdc_leakage_case"
-        / "ogdc_with_regimes.csv"
-    )
+    path = HERE.parent / "examples" / "ogdc_leakage_case" / "ogdc_with_regimes.csv"
     df = pd.read_csv(path, index_col="Date", parse_dates=True)
     return df.dropna(subset=["Direction"])
 
@@ -112,9 +107,7 @@ def _load_alfred_gdp() -> pd.DataFrame:
     realtime = raw["GDPC1_19950101"].dropna()
     df = pd.DataFrame(index=realtime.index)
     df["gdp_level_realtime"] = realtime.to_numpy()
-    df["gdp_level_asrevised2024"] = raw.loc[
-        realtime.index, "GDPC1_20240101"
-    ].to_numpy()
+    df["gdp_level_asrevised2024"] = raw.loc[realtime.index, "GDPC1_20240101"].to_numpy()
     df["gdp_declined"] = (df["gdp_level_realtime"].diff() < 0).astype(float)
     return df.dropna()
 
@@ -276,19 +269,13 @@ def evaluate(case: Case) -> dict:
     false_positives = flagged & known_clean
     false_negatives = case.known_leaky - flagged
 
-    precision = (
-        len(true_positives) / len(flagged) if flagged else float("nan")
-    )
+    precision = len(true_positives) / len(flagged) if flagged else float("nan")
     recall = (
         len(true_positives) / len(case.known_leaky)
         if case.known_leaky
         else float("nan")
     )
-    fpr = (
-        len(false_positives) / len(known_clean)
-        if known_clean
-        else float("nan")
-    )
+    fpr = len(false_positives) / len(known_clean) if known_clean else float("nan")
 
     return {
         "case": case.name,
@@ -348,9 +335,7 @@ def main() -> None:
             f"(of {result['n_known_clean']} known-clean columns)"
         )
         if result["false_positives"]:
-            lines.append(
-                f"  - **Wrongly flagged:** {result['false_positives']}"
-            )
+            lines.append(f"  - **Wrongly flagged:** {result['false_positives']}")
         lines.append("")
 
     out_dir = HERE / "results"

@@ -162,6 +162,8 @@ def test_aware_vs_naive_still_raises():
     """The genuine mismatch this guard exists for must still be caught."""
     idx = _idx(50).tz_localize("UTC")
     df = pd.DataFrame({"cpi": np.arange(50.0)}, index=idx)
-    naive_avail = pd.Series(pd.Timestamp("2020-01-01") - pd.Timedelta(days=1), index=idx)
+    naive_avail = pd.Series(
+        pd.Timestamp("2020-01-01") - pd.Timedelta(days=1), index=idx
+    )
     with pytest.raises(ValueError, match="timezone mismatch"):
         audit_asof_leakage(df, {"cpi": naive_avail})

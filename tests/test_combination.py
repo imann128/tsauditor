@@ -654,9 +654,10 @@ def _threshold_combo_df(n=N, seed=0, noise=0.0):
     b = rng.normal(size=n)
     blur = rng.normal(scale=noise, size=n) if noise else 0.0
     target = ((a - b + blur) > 0).astype(int)
-    return pd.DataFrame({"target": target, "a": a, "b": b}, index=pd.date_range(
-        "2024-01-01", periods=n, freq="D"
-    ))
+    return pd.DataFrame(
+        {"target": target, "a": a, "b": b},
+        index=pd.date_range("2024-01-01", periods=n, freq="D"),
+    )
 
 
 def test_detects_binary_threshold_combination():
@@ -707,7 +708,9 @@ def test_no_binary_false_positives_bounded_rate():
         )
         if audit_combination_leakage(df, target="target"):
             flags += 1
-    assert flags <= 5, f"{flags}/{trials} false positives -- rate too high for alpha=0.01"
+    assert flags <= 5, (
+        f"{flags}/{trials} false positives -- rate too high for alpha=0.01"
+    )
 
 
 def test_binary_threshold_param_is_respected():

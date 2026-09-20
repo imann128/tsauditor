@@ -3,7 +3,7 @@
 [![codecov](https://codecov.io/github/imann128/tsauditor/graph/badge.svg)](https://codecov.io/github/imann128/tsauditor)
 [![Docs](https://img.shields.io/readthedocs/tsauditor)](https://tsauditor.readthedocs.io/en/stable/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)
 
 A data-quality auditing library for **time-series tabular data**, with a focus on
 financial and sensor domains. `tsauditor` scans a `DataFrame` and returns a

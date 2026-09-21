@@ -239,3 +239,15 @@ def test_binary_threshold_boundary_is_pinned():
     flagged = audit_equivalence(perfect, target="y")
     assert len(flagged) == 1
     assert flagged[0].evidence["threshold"] == 0.95
+
+
+def test_single_row_df():
+    # With only one observation every feature column falls below min_obs (30),
+    # so audit_equivalence skips all of them and must return an empty list
+    # without raising.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"target": [1], "feature": [1.0]}, index=dates)
+
+    issues = audit_equivalence(df_single, target="target")
+    assert isinstance(issues, list)
+    assert len(issues) == 0

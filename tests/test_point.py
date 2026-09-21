@@ -264,3 +264,15 @@ def test_worst_evidence_always_matches_a_flagged_row(seed):
 
     worst_row = idx.get_loc(pd.Timestamp(ev["worst_timestamp"]))
     assert combined[worst_row]
+
+
+def test_single_row_df():
+    # A single-row DataFrame provides no distribution to compute Z-scores or
+    # IQR bounds from, so audit_point_anomalies must return an empty list
+    # without raising.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"value": [42.0]}, index=dates)
+
+    issues = audit_point_anomalies(df_single)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

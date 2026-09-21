@@ -159,3 +159,14 @@ def test_shuffled_but_valid_index_still_finds_the_cluster():
         == sorted_issues[0].evidence["longest_consecutive_run"]
         == 5
     )
+
+
+def test_single_row_df():
+    # A single-row DataFrame has no NaN runs to cluster and cannot breach any
+    # missing-rate threshold, so audit_missing must return an empty list.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"value": [100.0]}, index=dates)
+
+    issues = audit_missing(df_single, domain="finance")
+    assert isinstance(issues, list)
+    assert len(issues) == 0

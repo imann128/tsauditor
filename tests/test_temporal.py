@@ -265,3 +265,15 @@ def test_staggered_feature_leak_caught_despite_regime_change():
     )
     ev = next(i for i in issues if i.column == "leaky").evidence
     assert ev["excess_over_persistence"] >= 0.1
+
+
+def test_single_row_df():
+    # With only one observation every feature column falls below min_obs (30),
+    # so audit_temporal_leakage skips all of them and must return an empty
+    # list without raising.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"target": [1.0], "feature": [2.0]}, index=dates)
+
+    issues = audit_temporal_leakage(df_single, target="target")
+    assert isinstance(issues, list)
+    assert len(issues) == 0

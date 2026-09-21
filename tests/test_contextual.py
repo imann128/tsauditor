@@ -275,3 +275,15 @@ def test_spike_zscore_boundary_is_strictly_greater_than():
 
     assert [i for i in at_boundary if i.code == "ANO003"] == []
     assert len([i for i in just_below if i.code == "ANO003"]) == 1
+
+
+def test_single_row_df():
+    # A single-row DataFrame has no consecutive run of stuck values and no
+    # rolling local context for spike detection, so audit_contextual_anomalies
+    # must return an empty list without raising.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"value": [50.0]}, index=dates)
+
+    issues = audit_contextual_anomalies(df_single)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

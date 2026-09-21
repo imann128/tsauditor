@@ -188,3 +188,15 @@ def test_constant_column_does_not_crash_scan():
     df = pd.DataFrame({"price": np.linspace(1, 5, 80), "flag": np.ones(80)}, index=idx)
     report = tsa.scan(df, run_stationarity=True)  # must not raise
     assert not any(i.code == "PRF003" and i.column == "flag" for i in report.all_issues)
+
+
+def test_single_row_df():
+    # A single-row DataFrame has fewer observations than min_obs, so the ADF
+    # test is skipped for every column. audit_stationarity must return an
+    # empty list without raising.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"value": [1.0]}, index=dates)
+
+    issues = audit_stationarity(df_single)
+    assert isinstance(issues, list)
+    assert len(issues) == 0

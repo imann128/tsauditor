@@ -471,3 +471,15 @@ def test_short_series_lag_values_agree_with_a_longer_equivalent_slice():
         overlap = 8 - abs(tau)
         if overlap < 3:
             assert pd.isna(matrix.iloc[0][col]), f"tau={tau} should be NaN"
+
+
+def test_single_row_df():
+    # With only one observation every feature column falls below min_obs (30),
+    # so audit_correlation_leakage skips all of them and must return an empty
+    # list without raising.
+    dates = pd.date_range("2026-05-22", periods=1, freq="B")
+    df_single = pd.DataFrame({"target": [1.0], "feature": [2.0]}, index=dates)
+
+    issues = audit_correlation_leakage(df_single, target="target")
+    assert isinstance(issues, list)
+    assert len(issues) == 0

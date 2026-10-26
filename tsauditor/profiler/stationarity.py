@@ -20,6 +20,28 @@ def audit_stationarity(
     the maximum lag and searches all of them via AIC: the bulk of scan()'s
     runtime. Passing a small cap (e.g. 4) sharply reduces the number of OLS fits
     at a slight cost in test precision.
+
+    Examples
+    --------
+    A random walk is non-stationary, while white noise is not flagged:
+
+    >>> import numpy as np
+    >>> import pandas as pd
+    >>> rng = np.random.default_rng(0)
+    >>> idx = pd.date_range("2024-01-01", periods=100, freq="D")
+    >>> df = pd.DataFrame({
+    ...     "walk": np.cumsum(rng.normal(size=100)),
+    ...     "noise": rng.normal(size=100),
+    ... }, index=idx)
+    >>> issues = audit_stationarity(df)
+    >>> len(issues)
+    1
+    >>> issues[0].code
+    'PRF003'
+    >>> issues[0].column
+    'walk'
+    >>> issues[0].evidence["p_value"] > 0.05
+    True
     """
     issues = []
 

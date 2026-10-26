@@ -81,6 +81,29 @@ def audit_point_anomalies(
     disagree with the z-score about, a real added cost (ESD is O(k*n) per
     column) for a substantially rarer failure mode; left as a known,
     separate limitation rather than folded into this fix.
+
+    Examples
+    --------
+    A sensor reading that sits near 10 with one clear spike:
+
+    >>> import pandas as pd
+    >>> values = [10.0, 10.2, 9.8, 10.1, 9.9, 10.0, 10.3, 9.7, 10.1, 9.9] * 3
+    >>> values[15] = 25.0
+    >>> idx = pd.date_range("2024-01-01", periods=30, freq="h")
+    >>> df = pd.DataFrame({"temp": values}, index=idx)
+    >>> issues = audit_point_anomalies(df)
+    >>> len(issues)
+    1
+    >>> issues[0].code
+    'ANO002'
+    >>> issues[0].column
+    'temp'
+    >>> issues[0].evidence["worst_value"]
+    25.0
+    >>> issues[0].evidence["worst_timestamp"]
+    '2024-01-01 15:00:00'
+    >>> issues[0].evidence["zscore_outlier_count"]
+    1
     """
     issues = []
 

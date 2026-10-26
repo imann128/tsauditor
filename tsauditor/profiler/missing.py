@@ -143,6 +143,33 @@ def audit_missing(
     list
         List of Issue objects describing missing value anomalies.
 
+    Examples
+    --------
+    A sensor column with a four-reading outage. It is 40% missing, which is
+    above the default 30% rate threshold (PRF006), and the four NaNs in a row
+    exceed the default cluster threshold of 3 (PRF002):
+
+    >>> import numpy as np
+    >>> import pandas as pd
+    >>> idx = pd.date_range("2024-01-01", periods=10, freq="D")
+    >>> df = pd.DataFrame(
+    ...     {
+    ...         "temp": [20.1, 20.4, np.nan, np.nan, np.nan, np.nan,
+    ...                  21.0, 21.2, 21.1, 20.9],
+    ...         "ok": range(10),
+    ...     },
+    ...     index=idx,
+    ... )
+    >>> issues = audit_missing(df)
+    >>> [(i.code, i.column) for i in issues]
+    [('PRF006', 'temp'), ('PRF002', 'temp')]
+    >>> issues[0].evidence["missing_percentage"]
+    40.0
+    >>> issues[1].evidence["longest_consecutive_run"]
+    4
+    >>> issues[1].evidence["first_occurrence"]
+    '2024-01-03 00:00:00'
+
     Notes
     -----
     ``cluster_threshold``'s domain resolution only special-cases "finance";

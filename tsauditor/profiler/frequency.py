@@ -13,6 +13,28 @@ def audit_frequency(df: pd.DataFrame, domain: str = None) -> list:
 
     Returns:
         list: List of Issue objects describing discovered data quality issues.
+
+    Examples:
+        A daily series with an 8-day hole in the middle. The median gap is
+        1 day, so any gap of 3 days or more is flagged (PRF001):
+
+        >>> import pandas as pd
+        >>> idx = pd.DatetimeIndex(
+        ...     list(pd.date_range("2024-01-01", periods=4, freq="D"))
+        ...     + list(pd.date_range("2024-01-12", periods=4, freq="D"))
+        ... )
+        >>> df = pd.DataFrame({"price": range(8)}, index=idx)
+        >>> issues = audit_frequency(df)
+        >>> len(issues)
+        1
+        >>> issues[0].code
+        'PRF001'
+        >>> issues[0].evidence["gap_count"]
+        1
+        >>> issues[0].evidence["maximum_gap_days"]
+        8.0
+        >>> issues[0].evidence["locations"]
+        ['2024-01-12 00:00:00']
     """
     issues = []
 

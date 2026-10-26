@@ -170,3 +170,27 @@ def test_single_row_df():
     issues = audit_missing(df_single, domain="finance")
     assert isinstance(issues, list)
     assert len(issues) == 0
+
+
+def test_all_nan_column():
+    # A column that is entirely NaN is reported (PRF006 at 100% missing, and
+    # PRF002 as a single run covering every row) rather than skipped or
+    # raising. A healthy column alongside it is not flagged.
+    dates = pd.date_range("2026-01-01", periods=20, freq="D")
+    df = pd.DataFrame(
+        {"dead": np.full(20, np.nan), "ok": np.arange(20, dtype=float)},
+        index=dates,
+    )
+
+    issues = audit_missing(df)
+
+    assert {(i.code, i.column) for i in issues} == {
+        ("PRF006", "dead"),
+        ("PRF002", "dead"),
+    }
+    prf006 = next(i for i in issues if i.code == "PRF006")
+    assert prf006.evidence["missing_count"] == 20
+    assert prf006.evidence["missing_percentage"] == 100.0
+    prf002 = next(i for i in issues if i.code == "PRF002")
+    assert prf002.evidence["longest_consecutive_run"] == 20
+    assert prf002.evidence["cluster_count"] == 1

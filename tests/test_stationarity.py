@@ -200,3 +200,19 @@ def test_single_row_df():
     issues = audit_stationarity(df_single)
     assert isinstance(issues, list)
     assert len(issues) == 0
+
+
+def test_all_nan_column():
+    # An all-NaN column leaves zero observations after dropna(), which is
+    # below min_obs, so the ADF test is skipped for it without raising.
+    # Other columns are still tested.
+    dates = pd.date_range("2026-01-01", periods=100, freq="D")
+    walk = np.random.default_rng(0).normal(size=100).cumsum()
+    df = pd.DataFrame({"dead": np.full(100, np.nan), "walk": walk}, index=dates)
+
+    issues = audit_stationarity(df)
+
+    assert [(i.code, i.column) for i in issues] == [("PRF003", "walk")]
+
+    only_nan = audit_stationarity(df[["dead"]])
+    assert only_nan == []

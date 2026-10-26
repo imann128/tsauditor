@@ -287,3 +287,19 @@ def test_single_row_df():
     issues = audit_contextual_anomalies(df_single)
     assert isinstance(issues, list)
     assert len(issues) == 0
+
+
+def test_all_nan_column():
+    # An all-NaN column has no stuck runs and no rolling spikes, so it is
+    # skipped without raising. Other columns are still audited.
+    dates = pd.date_range("2026-01-01", periods=30, freq="D")
+    stuck = np.arange(30, dtype=float)
+    stuck[10:20] = 5.0
+    df = pd.DataFrame({"dead": np.full(30, np.nan), "stuck": stuck}, index=dates)
+
+    issues = audit_contextual_anomalies(df)
+
+    assert [(i.code, i.column) for i in issues] == [("ANO001", "stuck")]
+
+    only_nan = audit_contextual_anomalies(df[["dead"]])
+    assert only_nan == []

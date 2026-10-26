@@ -276,3 +276,21 @@ def test_single_row_df():
     issues = audit_point_anomalies(df_single)
     assert isinstance(issues, list)
     assert len(issues) == 0
+
+
+def test_all_nan_column():
+    # An all-NaN column has nothing to compute a mean or std on, so it is
+    # skipped without raising. Other columns are still audited.
+    dates = pd.date_range("2026-01-01", periods=60, freq="D")
+    values = np.zeros(60)
+    values[::2] = 1.0
+    values[30] = 100.0
+    df = pd.DataFrame({"dead": np.full(60, np.nan), "live": values}, index=dates)
+
+    issues = audit_point_anomalies(df)
+
+    assert [i.column for i in issues] == ["live"]
+    assert issues[0].code == "ANO002"
+
+    only_nan = audit_point_anomalies(df[["dead"]])
+    assert only_nan == []
